@@ -39,6 +39,7 @@ export * from "./llm-provider-api-key";
 export * from "./llm-providers";
 export * from "./mcp-catalog";
 export * from "./mcp-server";
+export * from "./mcp-server-image-update-state";
 export * from "./mcp-server-installation-request";
 export * from "./mcp-tool-call";
 export * from "./member";

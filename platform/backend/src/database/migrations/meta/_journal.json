@@ -1667,6 +1667,13 @@
       "when": 1778786612751,
       "tag": "0237_regular_goblin_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 238,
+      "version": "7",
+      "when": 1778843960849,
+      "tag": "0238_bizarre_lake",
+      "breakpoints": true
     }
   ]
 }

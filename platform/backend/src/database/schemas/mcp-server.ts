@@ -52,6 +52,12 @@ const mcpServerTable = pgTable(
       .notNull()
       .default("personal"),
     reinstallRequired: boolean("reinstall_required").notNull().default(false),
+    imageUpdateCheckEnabled: boolean("image_update_check_enabled")
+      .notNull()
+      .default(true),
+    imageUpdateAutoRestartEnabled: boolean("image_update_auto_restart_enabled")
+      .notNull()
+      .default(true),
     localInstallationStatus: text("local_installation_status")
       .notNull()
       .default("idle")
