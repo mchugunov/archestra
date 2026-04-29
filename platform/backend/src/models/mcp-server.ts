@@ -381,6 +381,47 @@ class McpServerModel {
       .where(inArray(schema.mcpServersTable.id, ids));
   }
 
+  static async findLocalServersEligibleForImageUpdateCheck(): Promise<
+    Array<{
+      server: typeof schema.mcpServersTable.$inferSelect;
+      catalog: Pick<
+        typeof schema.internalMcpCatalogTable.$inferSelect,
+        | "id"
+        | "name"
+        | "serverType"
+        | "localConfig"
+        | "deploymentSpecYaml"
+        | "localConfigSecretId"
+      >;
+    }>
+  > {
+    return await db
+      .select({
+        server: schema.mcpServersTable,
+        catalog: {
+          id: schema.internalMcpCatalogTable.id,
+          name: schema.internalMcpCatalogTable.name,
+          serverType: schema.internalMcpCatalogTable.serverType,
+          localConfig: schema.internalMcpCatalogTable.localConfig,
+          deploymentSpecYaml: schema.internalMcpCatalogTable.deploymentSpecYaml,
+          localConfigSecretId:
+            schema.internalMcpCatalogTable.localConfigSecretId,
+        },
+      })
+      .from(schema.mcpServersTable)
+      .innerJoin(
+        schema.internalMcpCatalogTable,
+        eq(schema.mcpServersTable.catalogId, schema.internalMcpCatalogTable.id),
+      )
+      .where(
+        and(
+          eq(schema.mcpServersTable.serverType, "local"),
+          eq(schema.internalMcpCatalogTable.serverType, "local"),
+          eq(schema.mcpServersTable.imageUpdateCheckEnabled, true),
+        ),
+      );
+  }
+
   static async findByCatalogId(catalogId: string): Promise<McpServer[]> {
     return await db
       .select()

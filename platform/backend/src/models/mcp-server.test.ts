@@ -102,6 +102,67 @@ describe("McpServerModel", () => {
     });
   });
 
+  describe("findLocalServersEligibleForImageUpdateCheck", () => {
+    test("returns enabled local servers with catalog config and filters out disabled and non-local servers", async ({
+      makeInternalMcpCatalog,
+      makeMcpServer,
+    }) => {
+      const enabledLocalCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/enabled-server:latest",
+        },
+      });
+      const disabledLocalCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/disabled-server:latest",
+        },
+      });
+      const remoteCatalog = await makeInternalMcpCatalog({
+        serverType: "remote",
+        serverUrl: "https://remote.example.com/mcp",
+      });
+
+      const enabledLocalServer = await makeMcpServer({
+        catalogId: enabledLocalCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: true,
+      });
+      const disabledLocalServer = await makeMcpServer({
+        catalogId: disabledLocalCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: false,
+      });
+      const remoteServer = await makeMcpServer({
+        catalogId: remoteCatalog.id,
+        serverType: "remote",
+        imageUpdateCheckEnabled: true,
+      });
+
+      const results =
+        await McpServerModel.findLocalServersEligibleForImageUpdateCheck();
+
+      expect(results.map(({ server }) => server.id)).toEqual([
+        enabledLocalServer.id,
+      ]);
+      expect(results[0].catalog).toMatchObject({
+        id: enabledLocalCatalog.id,
+        name: enabledLocalCatalog.name,
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/enabled-server:latest",
+        },
+      });
+      expect(
+        results.some(({ server }) => server.id === disabledLocalServer.id),
+      ).toBe(false);
+      expect(results.some(({ server }) => server.id === remoteServer.id)).toBe(
+        false,
+      );
+    });
+  });
+
   describe("findAll", () => {
     test("returns servers with user details from combined query", async ({
       makeMcpServer,
