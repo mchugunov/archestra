@@ -5,6 +5,7 @@ import type { LocalConfigSchema } from "@shared";
 import { vi } from "vitest";
 import type { z } from "zod";
 import config from "@/config";
+import logger from "@/logging";
 import { describe, expect, test } from "@/test";
 import type { McpServer } from "@/types";
 import K8sDeployment, {
@@ -14,6 +15,24 @@ import K8sDeployment, {
   resetPlatformNodeSelectorCache,
   resetPlatformTolerationsCache,
 } from "./k8s-deployment";
+
+vi.mock("@/logging", () => {
+  const mockedLogger = {
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+  };
+
+  return {
+    default: {
+      ...mockedLogger,
+      child: vi.fn(() => mockedLogger),
+    },
+  };
+});
 
 // Helper function to create a K8sDeployment instance with mocked dependencies
 function createK8sDeploymentInstance(
@@ -4427,6 +4446,292 @@ describe("K8sDeployment.getRunningImageDigest", () => {
     ]);
 
     await expect(deployment.getRunningImageDigest()).resolves.toBeNull();
+  });
+});
+
+describe("K8sDeployment.generateImageDigestProbePodSpec", () => {
+  test("generates a short-lived probe pod for a tag-based image", () => {
+    const mcpServer = {
+      id: "server-123",
+      name: "Probe Server",
+    } as unknown as McpServer;
+
+    const pod = K8sDeployment.generateImageDigestProbePodSpec({
+      image: "ghcr.io/example/mcp-server:1.2.3",
+      podName: "mcp-image-probe-server-123-abc123-def456",
+      namespace: "archestra-runtime",
+      mcpServer,
+      imagePullSecrets: [{ name: "registry-secret" }],
+      nodeSelector: { "node-pool": "mcp" },
+      tolerations: [
+        {
+          key: "workload",
+          operator: "Equal",
+          value: "mcp",
+          effect: "NoSchedule",
+        },
+      ],
+      serviceAccountName: "mcp-runner",
+      activeDeadlineSeconds: 65,
+    });
+
+    expect(pod.metadata).toMatchObject({
+      name: "mcp-image-probe-server-123-abc123-def456",
+      namespace: "archestra-runtime",
+      labels: {
+        app: "mcp-image-digest-probe",
+        "mcp-server-probe-id": "server-123",
+        "mcp-server-name": "probe-server",
+      },
+    });
+    expect(pod.metadata?.labels?.["mcp-server-id"]).toBeUndefined();
+    expect(pod.spec).toMatchObject({
+      restartPolicy: "Never",
+      terminationGracePeriodSeconds: 0,
+      enableServiceLinks: false,
+      automountServiceAccountToken: false,
+      activeDeadlineSeconds: 65,
+      serviceAccountName: "mcp-runner",
+      imagePullSecrets: [{ name: "registry-secret" }],
+      nodeSelector: { "node-pool": "mcp" },
+      tolerations: [
+        {
+          key: "workload",
+          operator: "Equal",
+          value: "mcp",
+          effect: "NoSchedule",
+        },
+      ],
+    });
+    expect(pod.spec?.containers).toEqual([
+      expect.objectContaining({
+        name: "mcp-image-digest-probe",
+        image: "ghcr.io/example/mcp-server:1.2.3",
+        command: ["/bin/true"],
+        imagePullPolicy: "Always",
+      }),
+    ]);
+  });
+
+  test("does not force Always pull policy for digest-pinned images", () => {
+    const mcpServer = {
+      id: "server-123",
+      name: "Probe Server",
+    } as unknown as McpServer;
+
+    const pod = K8sDeployment.generateImageDigestProbePodSpec({
+      image: "ghcr.io/example/mcp-server@sha256:abc123",
+      podName: "mcp-image-probe-server-123-abc123-def456",
+      namespace: "archestra-runtime",
+      mcpServer,
+    });
+
+    expect(pod.spec?.containers[0].imagePullPolicy).toBeUndefined();
+  });
+});
+
+describe("K8sDeployment.resolveAvailableImageDigest", () => {
+  function createProbeDeployment(options?: {
+    readPod?: k8s.V1Pod;
+    deleteError?: unknown;
+  }): {
+    deployment: K8sDeployment;
+    createNamespacedPod: ReturnType<typeof vi.fn>;
+    readNamespacedPod: ReturnType<typeof vi.fn>;
+    deleteNamespacedPod: ReturnType<typeof vi.fn>;
+  } {
+    const mcpServer = {
+      id: "srv-123",
+      name: "Test Server",
+      catalogId: null,
+      secretId: null,
+      ownerId: null,
+      reinstallRequired: false,
+      localInstallationStatus: "idle",
+      localInstallationError: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as unknown as McpServer;
+    const createNamespacedPod = vi.fn().mockResolvedValue({});
+    const readNamespacedPod = vi.fn().mockResolvedValue(
+      options?.readPod ?? {
+        status: {
+          phase: "Running",
+          containerStatuses: [
+            {
+              name: "mcp-image-digest-probe",
+              imageID: "docker-pullable://ghcr.io/example/server@sha256:abc123",
+            },
+          ],
+        },
+      },
+    );
+    const deleteNamespacedPod = options?.deleteError
+      ? vi.fn().mockRejectedValue(options.deleteError)
+      : vi.fn().mockResolvedValue({});
+
+    const deployment = new K8sDeployment({
+      mcpServer,
+      k8sApi: {
+        createNamespacedPod,
+        readNamespacedPod,
+        deleteNamespacedPod,
+      } as unknown as k8s.CoreV1Api,
+      k8sAppsApi: {} as k8s.AppsV1Api,
+      k8sAttach: {} as Attach,
+      k8sLog: {} as Log,
+      k8sExec: {} as Exec,
+      namespace: "archestra-runtime",
+      catalogItem: null,
+    });
+
+    return {
+      deployment,
+      createNamespacedPod,
+      readNamespacedPod,
+      deleteNamespacedPod,
+    };
+  }
+
+  test("creates a probe pod, reads the resolved digest, and deletes the pod", async () => {
+    const {
+      deployment,
+      createNamespacedPod,
+      readNamespacedPod,
+      deleteNamespacedPod,
+    } = createProbeDeployment();
+
+    await expect(
+      deployment.resolveAvailableImageDigest({
+        image: "ghcr.io/example/server:latest",
+        resolvedImagePullSecretNames: [{ name: "registry-secret" }],
+        timeoutMs: 20,
+        pollIntervalMs: 1,
+      }),
+    ).resolves.toBe("sha256:abc123");
+
+    expect(createNamespacedPod).toHaveBeenCalledWith({
+      namespace: "archestra-runtime",
+      body: expect.objectContaining({
+        metadata: expect.objectContaining({
+          name: expect.stringMatching(/^mcp-image-probe-srv-123-[a-f0-9]{12}-/),
+          namespace: "archestra-runtime",
+        }),
+        spec: expect.objectContaining({
+          imagePullSecrets: [{ name: "registry-secret" }],
+        }),
+      }),
+    });
+    const podName = createNamespacedPod.mock.calls[0][0].body.metadata.name;
+    expect(readNamespacedPod).toHaveBeenCalledWith({
+      name: podName,
+      namespace: "archestra-runtime",
+    });
+    expect(deleteNamespacedPod).toHaveBeenCalledWith({
+      name: podName,
+      namespace: "archestra-runtime",
+    });
+  });
+
+  test("deletes the probe pod when digest resolution times out", async () => {
+    const { deployment, createNamespacedPod, deleteNamespacedPod } =
+      createProbeDeployment({
+        readPod: {
+          status: {
+            phase: "Pending",
+            containerStatuses: [
+              {
+                name: "mcp-image-digest-probe",
+              },
+            ],
+          },
+        } as k8s.V1Pod,
+      });
+
+    await expect(
+      deployment.resolveAvailableImageDigest({
+        image: "ghcr.io/example/server:latest",
+        timeoutMs: 2,
+        pollIntervalMs: 1,
+      }),
+    ).rejects.toThrow(
+      "Timed out resolving image digest for ghcr.io/example/server:latest",
+    );
+
+    const podName = createNamespacedPod.mock.calls[0][0].body.metadata.name;
+    expect(deleteNamespacedPod).toHaveBeenCalledWith({
+      name: podName,
+      namespace: "archestra-runtime",
+    });
+  });
+
+  test("deletes the probe pod when Kubernetes reports an image pull failure", async () => {
+    const { deployment, createNamespacedPod, deleteNamespacedPod } =
+      createProbeDeployment({
+        readPod: {
+          status: {
+            phase: "Pending",
+            containerStatuses: [
+              {
+                name: "mcp-image-digest-probe",
+                state: {
+                  waiting: {
+                    reason: "ImagePullBackOff",
+                    message: "pull access denied",
+                  },
+                },
+              },
+            ],
+          },
+        } as k8s.V1Pod,
+      });
+
+    await expect(
+      deployment.resolveAvailableImageDigest({
+        image: "ghcr.io/example/private-server:latest",
+        timeoutMs: 20,
+        pollIntervalMs: 1,
+      }),
+    ).rejects.toThrow("ImagePullBackOff - pull access denied");
+
+    const podName = createNamespacedPod.mock.calls[0][0].body.metadata.name;
+    expect(deleteNamespacedPod).toHaveBeenCalledWith({
+      name: podName,
+      namespace: "archestra-runtime",
+    });
+  });
+
+  test("logs cleanup failure without masking a resolved digest", async () => {
+    const cleanupError = new Error("delete failed");
+    const warnMock = vi.mocked(logger.warn);
+    warnMock.mockClear();
+    const { deployment, createNamespacedPod, deleteNamespacedPod } =
+      createProbeDeployment({
+        deleteError: cleanupError,
+      });
+
+    await expect(
+      deployment.resolveAvailableImageDigest({
+        image: "ghcr.io/example/server:latest",
+        timeoutMs: 20,
+        pollIntervalMs: 1,
+      }),
+    ).resolves.toBe("sha256:abc123");
+
+    const podName = createNamespacedPod.mock.calls[0][0].body.metadata.name;
+    expect(deleteNamespacedPod).toHaveBeenCalledWith({
+      name: podName,
+      namespace: "archestra-runtime",
+    });
+    expect(warnMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: cleanupError,
+        mcpServerId: "srv-123",
+        podName,
+        namespace: "archestra-runtime",
+      }),
+      "Failed to delete MCP image digest probe pod",
+    );
   });
 });
 
