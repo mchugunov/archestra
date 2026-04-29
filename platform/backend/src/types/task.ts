@@ -22,6 +22,7 @@ export const TaskTypeSchema = z.enum([
   "process_uploaded_files",
   "check_due_connectors",
   "check_due_schedule_triggers",
+  "check_mcp_image_updates",
   "schedule_trigger_run_execute",
 ]);
 export type TaskType = z.infer<typeof TaskTypeSchema>;
