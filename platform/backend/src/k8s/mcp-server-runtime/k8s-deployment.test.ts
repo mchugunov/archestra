@@ -4259,6 +4259,177 @@ describe("fetchPlatformPodTolerations (extractor)", () => {
   });
 });
 
+describe("K8sDeployment.getRunningImageDigest", () => {
+  function createK8sDeploymentWithPods(pods: k8s.V1Pod[]): {
+    deployment: K8sDeployment;
+    listNamespacedPod: ReturnType<typeof vi.fn>;
+  } {
+    const listNamespacedPod = vi.fn().mockResolvedValue({ items: pods });
+    const mockMcpServer = {
+      id: "test-server-id",
+      name: "test-server",
+      catalogId: "test-catalog-id",
+      secretId: null,
+      ownerId: null,
+      reinstallRequired: false,
+      localInstallationStatus: "idle",
+      localInstallationError: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as McpServer;
+
+    return {
+      deployment: new K8sDeployment({
+        mcpServer: mockMcpServer,
+        k8sApi: { listNamespacedPod } as unknown as k8s.CoreV1Api,
+        k8sAppsApi: {} as k8s.AppsV1Api,
+        k8sAttach: {} as Attach,
+        k8sLog: {} as Log,
+        k8sExec: {} as Exec,
+        namespace: "default",
+        catalogItem: null,
+      }),
+      listNamespacedPod,
+    };
+  }
+
+  test("returns normalized digest from the running mcp-server container status", async () => {
+    const { deployment, listNamespacedPod } = createK8sDeploymentWithPods([
+      {
+        metadata: { name: "test-pod" },
+        status: {
+          phase: "Running",
+          containerStatuses: [
+            {
+              name: "sidecar",
+              imageID: "docker-pullable://repo/sidecar@sha256:sidecar123",
+            },
+            {
+              name: "mcp-server",
+              imageID: "docker-pullable://repo/name@sha256:abc123",
+            },
+          ],
+        },
+      } as k8s.V1Pod,
+    ]);
+
+    await expect(deployment.getRunningImageDigest()).resolves.toBe(
+      "sha256:abc123",
+    );
+    expect(listNamespacedPod).toHaveBeenCalledWith({
+      namespace: "default",
+      labelSelector: "mcp-server-id=test-server-id",
+    });
+  });
+
+  test("normalizes containerd image IDs", async () => {
+    const { deployment } = createK8sDeploymentWithPods([
+      {
+        status: {
+          phase: "Running",
+          containerStatuses: [
+            {
+              name: "mcp-server",
+              imageID: "containerd://sha256:def456",
+            },
+          ],
+        },
+      } as k8s.V1Pod,
+    ]);
+
+    await expect(deployment.getRunningImageDigest()).resolves.toBe(
+      "sha256:def456",
+    );
+  });
+
+  test("returns null when no running pod exists", async () => {
+    const { deployment } = createK8sDeploymentWithPods([]);
+
+    await expect(deployment.getRunningImageDigest()).resolves.toBeNull();
+  });
+
+  test("returns null when only non-running pods exist", async () => {
+    const { deployment } = createK8sDeploymentWithPods([
+      {
+        status: {
+          phase: "Pending",
+          containerStatuses: [
+            {
+              name: "mcp-server",
+              imageID: "repo/name@sha256:abc123",
+            },
+          ],
+        },
+      } as k8s.V1Pod,
+    ]);
+
+    await expect(deployment.getRunningImageDigest()).resolves.toBeNull();
+  });
+
+  test("returns null when the running pod has no container statuses", async () => {
+    const { deployment } = createK8sDeploymentWithPods([
+      {
+        status: { phase: "Running" },
+      } as k8s.V1Pod,
+    ]);
+
+    await expect(deployment.getRunningImageDigest()).resolves.toBeNull();
+  });
+
+  test("returns null when the mcp-server container status is missing", async () => {
+    const { deployment } = createK8sDeploymentWithPods([
+      {
+        status: {
+          phase: "Running",
+          containerStatuses: [
+            {
+              name: "sidecar",
+              imageID: "repo/sidecar@sha256:sidecar123",
+            },
+          ],
+        },
+      } as k8s.V1Pod,
+    ]);
+
+    await expect(deployment.getRunningImageDigest()).resolves.toBeNull();
+  });
+
+  test("returns null when the mcp-server container image ID is missing", async () => {
+    const { deployment } = createK8sDeploymentWithPods([
+      {
+        status: {
+          phase: "Running",
+          containerStatuses: [
+            {
+              name: "mcp-server",
+            },
+          ],
+        },
+      } as k8s.V1Pod,
+    ]);
+
+    await expect(deployment.getRunningImageDigest()).resolves.toBeNull();
+  });
+
+  test("returns null when the image ID does not contain a digest", async () => {
+    const { deployment } = createK8sDeploymentWithPods([
+      {
+        status: {
+          phase: "Running",
+          containerStatuses: [
+            {
+              name: "mcp-server",
+              imageID: "repo/name:latest",
+            },
+          ],
+        },
+      } as k8s.V1Pod,
+    ]);
+
+    await expect(deployment.getRunningImageDigest()).resolves.toBeNull();
+  });
+});
+
 describe("K8sDeployment.getRecentLogs", () => {
   function createK8sDeploymentWithMockedApi(
     mockK8sApi: Partial<k8s.CoreV1Api>,

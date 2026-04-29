@@ -20,6 +20,10 @@ import logger from "@/logging";
 import { InternalMcpCatalogModel } from "@/models";
 import type { InternalMcpCatalog, McpServer } from "@/types";
 import {
+  MCP_SERVER_CONTAINER_NAME,
+  normalizeImageDigest,
+} from "./image-digest";
+import {
   customYamlToDeployment,
   resolvePlaceholders,
 } from "./k8s-yaml-generator";
@@ -1694,6 +1698,25 @@ export default class K8sDeployment {
   async hasRunningPod(): Promise<boolean> {
     const pod = await this.findPodForDeployment();
     return !!pod;
+  }
+
+  /**
+   * Return the normalized digest for the currently running MCP server container.
+   */
+  async getRunningImageDigest(): Promise<string | null> {
+    const pod = await this.findPodForDeployment();
+    if (!pod) {
+      return null;
+    }
+
+    const containerStatus = pod.status?.containerStatuses?.find(
+      (status) => status.name === MCP_SERVER_CONTAINER_NAME,
+    );
+    if (!containerStatus?.imageID) {
+      return null;
+    }
+
+    return normalizeImageDigest(containerStatus.imageID);
   }
 
   /**

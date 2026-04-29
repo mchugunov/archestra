@@ -697,6 +697,17 @@ export class McpServerRuntimeManager {
   }
 
   /**
+   * Get the normalized digest for the currently running MCP server container.
+   */
+  async getRunningImageDigest(mcpServerId: string): Promise<string | null> {
+    const k8sDeployment = await this.getOrLoadDeployment(mcpServerId);
+    if (!k8sDeployment) {
+      return null;
+    }
+    return k8sDeployment.getRunningImageDigest();
+  }
+
+  /**
    * Get the appropriate kubectl command based on pod status
    * Returns logs command if pod is running, describe command otherwise
    */
