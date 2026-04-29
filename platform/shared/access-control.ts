@@ -550,6 +550,9 @@ export const requiredEndpointPermissionsMap: Partial<
   [RouteId.InstallMcpServer]: {
     mcpServerInstallation: ["create"],
   },
+  [RouteId.UpdateMcpServer]: {
+    mcpServerInstallation: ["update"],
+  },
   [RouteId.DeleteMcpServer]: {
     mcpServerInstallation: ["delete"],
   },

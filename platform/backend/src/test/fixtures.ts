@@ -489,6 +489,7 @@ async function makeMcpServer(
       | "ownerId"
       | "teamId"
       | "scope"
+      | "serverType"
       | "imageUpdateCheckEnabled"
       | "imageUpdateAutoRestartEnabled"
     >

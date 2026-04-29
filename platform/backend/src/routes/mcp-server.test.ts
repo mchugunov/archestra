@@ -2,6 +2,7 @@ import { OAUTH_TOKEN_TYPE } from "@shared";
 import { and, eq } from "drizzle-orm";
 import { vi } from "vitest";
 import db, { schema } from "@/database";
+import McpServerModel from "@/models/mcp-server";
 import McpServerUserModel from "@/models/mcp-server-user";
 import { secretManager } from "@/secrets-manager";
 import type { FastifyInstanceWithZod } from "@/server";
@@ -1754,6 +1755,147 @@ describe("mcp server inspect route", () => {
         type: "unknown_api_error",
       },
     });
+  });
+
+  test("updates image update settings for a caller with MCP server update permission", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+    });
+    const mcpServer = await makeMcpServer({
+      ownerId: user.id,
+      catalogId: catalog.id,
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/mcp_server/${mcpServer.id}`,
+      payload: {
+        imageUpdateCheckEnabled: false,
+        imageUpdateAutoRestartEnabled: false,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      id: mcpServer.id,
+      imageUpdateCheckEnabled: false,
+      imageUpdateAutoRestartEnabled: false,
+    });
+
+    const persisted = await McpServerModel.findById(mcpServer.id);
+    expect(persisted).toMatchObject({
+      imageUpdateCheckEnabled: false,
+      imageUpdateAutoRestartEnabled: false,
+    });
+  });
+
+  test("allows an editor to update image update settings for another user's personal connection", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+    makeUser,
+  }) => {
+    const otherUser = await makeUser({ email: "settings-owner@example.com" });
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+    });
+    const mcpServer = await makeMcpServer({
+      ownerId: otherUser.id,
+      catalogId: catalog.id,
+      imageUpdateCheckEnabled: false,
+      imageUpdateAutoRestartEnabled: false,
+    });
+    hasPermissionMock.mockImplementation(
+      async (permission: Record<string, string[]>) => ({
+        success: !!permission.mcpServerInstallation?.includes("update"),
+      }),
+    );
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/mcp_server/${mcpServer.id}`,
+      payload: {
+        imageUpdateCheckEnabled: true,
+        imageUpdateAutoRestartEnabled: true,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const persisted = await McpServerModel.findById(mcpServer.id);
+    expect(persisted).toMatchObject({
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+  });
+
+  test("rejects image update settings changes for a non-owner without update permission", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+    makeUser,
+  }) => {
+    const otherUser = await makeUser({
+      email: "settings-forbidden-owner@example.com",
+    });
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+    });
+    const mcpServer = await makeMcpServer({
+      ownerId: otherUser.id,
+      catalogId: catalog.id,
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    hasPermissionMock.mockResolvedValue({ success: false });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/mcp_server/${mcpServer.id}`,
+      payload: {
+        imageUpdateCheckEnabled: false,
+        imageUpdateAutoRestartEnabled: false,
+      },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.message).toContain(
+      "You need MCP server update permission to update personal connection settings",
+    );
+
+    const persisted = await McpServerModel.findById(mcpServer.id);
+    expect(persisted).toMatchObject({
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+  });
+
+  test("rejects MCP server update payloads outside image update settings", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+    });
+    const mcpServer = await makeMcpServer({
+      ownerId: user.id,
+      catalogId: catalog.id,
+    });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/mcp_server/${mcpServer.id}`,
+      payload: {
+        name: "not-allowed",
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+
+    const persisted = await McpServerModel.findById(mcpServer.id);
+    expect(persisted?.name).toBe(mcpServer.name);
   });
 
   test("re-authenticates a remote MCP server with provided user config values", async ({

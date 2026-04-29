@@ -37220,6 +37220,8 @@ export type GetMcpServersResponses = {
         teamId: string | null;
         scope: 'personal' | 'team' | 'org';
         reinstallRequired: boolean;
+        imageUpdateCheckEnabled: boolean;
+        imageUpdateAutoRestartEnabled: boolean;
         localInstallationStatus: 'idle' | 'pending' | 'discovering-tools' | 'success' | 'error';
         localInstallationError: string | null;
         oauthRefreshError: 'refresh_failed' | 'no_refresh_token';
@@ -37254,6 +37256,8 @@ export type InstallMcpServerData = {
         teamId?: string | null;
         scope?: 'personal' | 'team' | 'org';
         reinstallRequired?: boolean;
+        imageUpdateCheckEnabled?: boolean;
+        imageUpdateAutoRestartEnabled?: boolean;
         localInstallationStatus?: 'idle' | 'pending' | 'discovering-tools' | 'success' | 'error';
         localInstallationError?: string | null;
         oauthRefreshError?: 'refresh_failed' | 'no_refresh_token';
@@ -37357,6 +37361,8 @@ export type InstallMcpServerResponses = {
         teamId: string | null;
         scope: 'personal' | 'team' | 'org';
         reinstallRequired: boolean;
+        imageUpdateCheckEnabled: boolean;
+        imageUpdateAutoRestartEnabled: boolean;
         localInstallationStatus: 'idle' | 'pending' | 'discovering-tools' | 'success' | 'error';
         localInstallationError: string | null;
         oauthRefreshError: 'refresh_failed' | 'no_refresh_token';
@@ -37555,6 +37561,8 @@ export type GetMcpServerResponses = {
         teamId: string | null;
         scope: 'personal' | 'team' | 'org';
         reinstallRequired: boolean;
+        imageUpdateCheckEnabled: boolean;
+        imageUpdateAutoRestartEnabled: boolean;
         localInstallationStatus: 'idle' | 'pending' | 'discovering-tools' | 'success' | 'error';
         localInstallationError: string | null;
         oauthRefreshError: 'refresh_failed' | 'no_refresh_token';
@@ -37579,6 +37587,124 @@ export type GetMcpServerResponses = {
 };
 
 export type GetMcpServerResponse = GetMcpServerResponses[keyof GetMcpServerResponses];
+
+export type UpdateMcpServerData = {
+    body: {
+        imageUpdateCheckEnabled?: boolean;
+        imageUpdateAutoRestartEnabled?: boolean;
+    };
+    path: {
+        id: string;
+    };
+    query?: never;
+    url: '/api/mcp_server/{id}';
+};
+
+export type UpdateMcpServerErrors = {
+    /**
+     * Default Response
+     */
+    400: {
+        error: {
+            message: string;
+            type: 'api_validation_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    401: {
+        error: {
+            message: string;
+            type: 'api_authentication_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    403: {
+        error: {
+            message: string;
+            type: 'api_authorization_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    404: {
+        error: {
+            message: string;
+            type: 'api_not_found_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    409: {
+        error: {
+            message: string;
+            type: 'api_conflict_error';
+            internal_code?: string;
+        };
+    };
+    /**
+     * Default Response
+     */
+    500: {
+        error: {
+            message: string;
+            type: 'api_internal_server_error';
+            internal_code?: string;
+        };
+    };
+};
+
+export type UpdateMcpServerError = UpdateMcpServerErrors[keyof UpdateMcpServerErrors];
+
+export type UpdateMcpServerResponses = {
+    /**
+     * Default Response
+     */
+    200: {
+        id: string;
+        name: string;
+        catalogId: string;
+        serverType: 'local' | 'remote' | 'builtin';
+        secretId: string | null;
+        ownerId: string | null;
+        teamId: string | null;
+        scope: 'personal' | 'team' | 'org';
+        reinstallRequired: boolean;
+        imageUpdateCheckEnabled: boolean;
+        imageUpdateAutoRestartEnabled: boolean;
+        localInstallationStatus: 'idle' | 'pending' | 'discovering-tools' | 'success' | 'error';
+        localInstallationError: string | null;
+        oauthRefreshError: 'refresh_failed' | 'no_refresh_token';
+        oauthRefreshFailedAt: string | null;
+        createdAt: string;
+        updatedAt: string;
+        ownerEmail?: string | null;
+        catalogName?: string | null;
+        users?: Array<string>;
+        userDetails?: Array<{
+            userId: string;
+            email: string;
+            createdAt: string;
+        }>;
+        teamDetails?: {
+            teamId: string;
+            name: string;
+            createdAt: string;
+        } | null;
+        secretStorageType?: 'vault' | 'external_vault' | 'database' | 'none';
+    };
+};
+
+export type UpdateMcpServerResponse = UpdateMcpServerResponses[keyof UpdateMcpServerResponses];
 
 export type ReauthenticateMcpServerData = {
     body: {
@@ -37678,6 +37804,8 @@ export type ReauthenticateMcpServerResponses = {
         teamId: string | null;
         scope: 'personal' | 'team' | 'org';
         reinstallRequired: boolean;
+        imageUpdateCheckEnabled: boolean;
+        imageUpdateAutoRestartEnabled: boolean;
         localInstallationStatus: 'idle' | 'pending' | 'discovering-tools' | 'success' | 'error';
         localInstallationError: string | null;
         oauthRefreshError: 'refresh_failed' | 'no_refresh_token';
@@ -38073,6 +38201,8 @@ export type ReinstallMcpServerResponses = {
         teamId: string | null;
         scope: 'personal' | 'team' | 'org';
         reinstallRequired: boolean;
+        imageUpdateCheckEnabled: boolean;
+        imageUpdateAutoRestartEnabled: boolean;
         localInstallationStatus: 'idle' | 'pending' | 'discovering-tools' | 'success' | 'error';
         localInstallationError: string | null;
         oauthRefreshError: 'refresh_failed' | 'no_refresh_token';

@@ -77,6 +77,7 @@ export const RouteId = {
   GetMcpServerTools: "getMcpServerTools",
   InspectMcpServer: "inspectMcpServer",
   InstallMcpServer: "installMcpServer",
+  UpdateMcpServer: "updateMcpServer",
   DeleteMcpServer: "deleteMcpServer",
   ReauthenticateMcpServer: "reauthenticateMcpServer",
   ReinstallMcpServer: "reinstallMcpServer",

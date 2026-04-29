@@ -41,9 +41,22 @@ import {
   type ResourceVisibilityScope,
   ResourceVisibilityScopeSchema,
   SelectMcpServerSchema,
+  UpdateMcpServerSchema,
   UuidIdSchema,
 } from "@/types";
 import { broadcastMcpInstallationStatus } from "@/websocket";
+
+const UpdateMcpServerImageUpdateSettingsSchema = UpdateMcpServerSchema.pick({
+  imageUpdateCheckEnabled: true,
+  imageUpdateAutoRestartEnabled: true,
+})
+  .strict()
+  .refine(
+    (settings) =>
+      settings.imageUpdateCheckEnabled !== undefined ||
+      settings.imageUpdateAutoRestartEnabled !== undefined,
+    "At least one image update setting is required",
+  );
 
 const mcpServerRoutes: FastifyPluginAsyncZod = async (fastify) => {
   fastify.get(
@@ -126,6 +139,43 @@ const mcpServerRoutes: FastifyPluginAsyncZod = async (fastify) => {
       }
 
       return reply.send(server);
+    },
+  );
+
+  fastify.patch(
+    "/api/mcp_server/:id",
+    {
+      schema: {
+        operationId: RouteId.UpdateMcpServer,
+        description: "Update image update settings for an installed MCP server",
+        tags: ["MCP Server"],
+        params: z.object({
+          id: UuidIdSchema,
+        }),
+        body: UpdateMcpServerImageUpdateSettingsSchema,
+        response: constructResponseSchema(SelectMcpServerSchema),
+      },
+    },
+    async ({ params: { id }, body, user, headers }, reply) => {
+      const mcpServer = await McpServerModel.findById(id);
+
+      if (!mcpServer) {
+        throw new ApiError(404, "MCP server not found");
+      }
+
+      await assertScopedSettingsUpdateAuthorization({
+        mcpServer,
+        userId: user.id,
+        headers,
+      });
+
+      const updatedServer = await McpServerModel.update(id, body);
+
+      if (!updatedServer) {
+        throw new ApiError(500, "Failed to update MCP server");
+      }
+
+      return reply.send(updatedServer);
     },
   );
 
@@ -1834,6 +1884,74 @@ async function findAccessibleMcpServer(params: {
 // =============================================================================
 // Internal helpers
 // =============================================================================
+
+async function assertScopedSettingsUpdateAuthorization(params: {
+  mcpServer: {
+    scope: "personal" | "team" | "org";
+    ownerId: string | null;
+    teamId: string | null;
+  };
+  userId: string;
+  headers: IncomingHttpHeaders;
+}): Promise<void> {
+  const { mcpServer, userId, headers } = params;
+
+  switch (mcpServer.scope) {
+    case "personal": {
+      const { success: hasMcpServerUpdate } = await hasPermission(
+        { mcpServerInstallation: ["update"] },
+        headers,
+      );
+      if (hasMcpServerUpdate) return;
+      throw new ApiError(
+        403,
+        "You need MCP server update permission to update personal connection settings",
+      );
+    }
+    case "team": {
+      if (!mcpServer.teamId) {
+        throw new ApiError(500, "Team-scoped MCP server is missing its teamId");
+      }
+      const { success: isMcpServerInstallationAdmin } = await hasPermission(
+        { mcpServerInstallation: ["admin"] },
+        headers,
+      );
+      if (isMcpServerInstallationAdmin) return;
+
+      const { success: hasMcpServerUpdate } = await hasPermission(
+        { mcpServerInstallation: ["update"] },
+        headers,
+      );
+      if (!hasMcpServerUpdate) {
+        throw new ApiError(
+          403,
+          "You need MCP server update permission to update team connection settings",
+        );
+      }
+      const isMember = await TeamModel.isUserInTeam(mcpServer.teamId, userId);
+      if (!isMember) {
+        throw new ApiError(
+          403,
+          "You can only update settings for teams you are a member of",
+        );
+      }
+      return;
+    }
+    case "org": {
+      const { success: isMcpServerInstallationAdmin } = await hasPermission(
+        { mcpServerInstallation: ["admin"] },
+        headers,
+      );
+      if (!isMcpServerInstallationAdmin) {
+        throw new ApiError(
+          403,
+          "Only mcpServerInstallation admins can update organization-scoped connection settings",
+        );
+      }
+      return;
+    }
+  }
+}
 
 /**
  * Gate the three destructive lifecycle actions (revoke / reauth / reinstall)
