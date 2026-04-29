@@ -26,6 +26,10 @@ import {
   normalizeImageDigest,
 } from "./image-digest";
 import {
+  collectImagePullSecretNames,
+  type ResolvedImagePullSecretName,
+} from "./image-pull-secrets";
+import {
   customYamlToDeployment,
   resolvePlaceholders,
 } from "./k8s-yaml-generator";
@@ -216,7 +220,7 @@ interface ImageDigestProbePodSpecOptions {
   podName: string;
   namespace: string;
   mcpServer: McpServer;
-  imagePullSecrets?: Array<{ name: string }>;
+  imagePullSecrets?: ResolvedImagePullSecretName[];
   nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null;
   tolerations?: k8s.V1Toleration[] | null;
   serviceAccountName?: string | null;
@@ -225,7 +229,7 @@ interface ImageDigestProbePodSpecOptions {
 
 interface ResolveAvailableImageDigestOptions {
   image: string;
-  resolvedImagePullSecretNames?: Array<{ name: string }>;
+  resolvedImagePullSecretNames?: ResolvedImagePullSecretName[];
   nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null;
   tolerations?: k8s.V1Toleration[] | null;
   serviceAccountName?: string | null;
@@ -718,31 +722,6 @@ export default class K8sDeployment {
   }
 
   /**
-   * Collect all imagePullSecrets names for pod spec: existing secret names +
-   * generated docker-registry secret names from credentials entries.
-   */
-  static collectImagePullSecretNames(
-    imagePullSecrets: ImagePullSecretConfig[] | undefined,
-    generatedRegcredNames: string[],
-  ): Array<{ name: string }> {
-    const names: Array<{ name: string }> = [];
-
-    if (imagePullSecrets) {
-      for (const entry of imagePullSecrets) {
-        if (entry.source === "existing") {
-          names.push({ name: entry.name });
-        }
-      }
-    }
-
-    for (const name of generatedRegcredNames) {
-      names.push({ name });
-    }
-
-    return names;
-  }
-
-  /**
    * Generate a short-lived pod that asks Kubernetes to resolve an image digest.
    */
   static generateImageDigestProbePodSpec(
@@ -823,6 +802,7 @@ export default class K8sDeployment {
    * @param httpPort - The HTTP port to expose (if needsHttp is true)
    * @param nodeSelector - Optional nodeSelector to apply to the pod spec (e.g., inherited from platform pod)
    * @param tolerations - Optional tolerations to apply to the pod spec (e.g., inherited from platform pod)
+   * @param resolvedImagePullSecretNames - Optional resolved ImagePullSecret names
    * @returns The Kubernetes deployment specification
    */
   generateDeploymentSpec(
@@ -832,7 +812,7 @@ export default class K8sDeployment {
     httpPort: number,
     nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null,
     tolerations?: k8s.V1Toleration[] | null,
-    resolvedImagePullSecretNames?: Array<{ name: string }>,
+    resolvedImagePullSecretNames?: ResolvedImagePullSecretName[],
   ): k8s.V1Deployment {
     // Check if YAML override is provided
     if (this.catalogItem?.deploymentSpecYaml) {
@@ -1029,7 +1009,7 @@ export default class K8sDeployment {
     httpPort: number,
     nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null,
     tolerations?: k8s.V1Toleration[] | null,
-    resolvedImagePullSecretNames?: Array<{ name: string }>,
+    resolvedImagePullSecretNames?: ResolvedImagePullSecretName[],
   ): k8s.V1Deployment | null {
     const k8sSecretName = this.getK8sSecretName();
 
@@ -1578,7 +1558,7 @@ export default class K8sDeployment {
    * Create or start the deployment for this MCP server
    */
   async startOrCreateDeployment(
-    resolvedImagePullSecretNames?: Array<{ name: string }>,
+    resolvedImagePullSecretNames?: ResolvedImagePullSecretName[],
   ): Promise<void> {
     try {
       /**
@@ -1824,10 +1804,10 @@ export default class K8sDeployment {
       options.serviceAccountName ?? catalogItem?.localConfig?.serviceAccount;
     const resolvedImagePullSecretNames =
       options.resolvedImagePullSecretNames ??
-      K8sDeployment.collectImagePullSecretNames(
-        catalogItem?.localConfig?.imagePullSecrets,
-        [],
-      );
+      collectImagePullSecretNames({
+        imagePullSecrets: catalogItem?.localConfig?.imagePullSecrets,
+        generatedRegcredNames: [],
+      });
 
     await this.k8sApi.createNamespacedPod({
       namespace: this.namespace,

@@ -73,6 +73,10 @@ vi.mock("@/config", async (importOriginal) => {
 const mockCreateK8sSecret = vi.fn().mockResolvedValue(undefined);
 const mockStartOrCreateDeployment = vi.fn().mockResolvedValue(undefined);
 const mockCreateDockerRegistrySecrets = vi.fn().mockResolvedValue([]);
+const mockResolveAvailableImageDigest = vi
+  .fn()
+  .mockResolvedValue("sha256:available");
+const mockResolveHttpEndpoint = vi.fn().mockResolvedValue(undefined);
 const mockK8sDeploymentInstances: Array<{
   options: Record<string, unknown>;
   createK8sSecret: ReturnType<typeof vi.fn>;
@@ -110,12 +114,16 @@ vi.mock("./k8s-deployment", () => {
       createK8sSecret: ReturnType<typeof vi.fn>;
       startOrCreateDeployment: ReturnType<typeof vi.fn>;
       createDockerRegistrySecrets: ReturnType<typeof vi.fn>;
+      resolveAvailableImageDigest: ReturnType<typeof vi.fn>;
+      resolveHttpEndpoint: ReturnType<typeof vi.fn>;
 
       constructor(options: Record<string, unknown>) {
         this.options = options;
         this.createK8sSecret = mockCreateK8sSecret;
         this.startOrCreateDeployment = mockStartOrCreateDeployment;
         this.createDockerRegistrySecrets = mockCreateDockerRegistrySecrets;
+        this.resolveAvailableImageDigest = mockResolveAvailableImageDigest;
+        this.resolveHttpEndpoint = mockResolveHttpEndpoint;
         mockK8sDeploymentInstances.push({
           options,
           createK8sSecret: this.createK8sSecret,
@@ -565,6 +573,15 @@ describe("McpServerRuntimeManager", () => {
         promptOnInstallation?: boolean;
         value?: string;
       }>;
+      catalogImagePullSecrets?: Array<
+        | { source: "existing"; name: string }
+        | {
+            source: "credentials";
+            server: string;
+            username: string;
+            email?: string;
+          }
+      >;
       catalogLocalConfigSecretId?: string;
       catalogSecretData?: Record<string, unknown>;
       mcpServerOverrides?: Partial<McpServer>;
@@ -572,6 +589,7 @@ describe("McpServerRuntimeManager", () => {
       const {
         vaultSecret,
         catalogEnvironment,
+        catalogImagePullSecrets,
         catalogLocalConfigSecretId,
         catalogSecretData,
         mcpServerOverrides,
@@ -611,6 +629,9 @@ describe("McpServerRuntimeManager", () => {
         serverType: "local",
         localConfig: {
           environment: catalogEnvironment,
+          ...(catalogImagePullSecrets
+            ? { imagePullSecrets: catalogImagePullSecrets }
+            : {}),
         },
         localConfigSecretId: catalogLocalConfigSecretId ?? null,
       } as unknown as Awaited<
@@ -845,6 +866,143 @@ describe("McpServerRuntimeManager", () => {
 
       cleanup();
     });
+
+    test("uses shared image pull secret resolution for existing and credential-based registry secrets", async () => {
+      mockCreateDockerRegistrySecrets.mockResolvedValueOnce([
+        "mcp-server-server-1-regcred-ghcr.io-bot",
+      ]);
+
+      const imagePullSecrets = [
+        { source: "existing" as const, name: "precreated-registry-secret" },
+        {
+          source: "credentials" as const,
+          server: "ghcr.io",
+          username: "bot",
+        },
+      ];
+      const { manager, mcpServer, cleanup } = await setupStartServerTest({
+        vaultSecret: {},
+        catalogEnvironment: [],
+        catalogImagePullSecrets: imagePullSecrets,
+        catalogLocalConfigSecretId: "catalog-regcred-secret",
+        catalogSecretData: {
+          "__regcred_password:ghcr.io:bot": "registry-password",
+          UNRELATED_SECRET: "not-a-regcred",
+        },
+      });
+
+      await manager.startServer(mcpServer);
+
+      expect(mockCreateDockerRegistrySecrets).toHaveBeenCalledWith(
+        {
+          "__regcred_password:ghcr.io:bot": "registry-password",
+        },
+        imagePullSecrets,
+      );
+      expect(mockStartOrCreateDeployment).toHaveBeenCalledWith([
+        { name: "precreated-registry-secret" },
+        { name: "mcp-server-server-1-regcred-ghcr.io-bot" },
+      ]);
+
+      cleanup();
+    });
+  });
+});
+
+describe("McpServerRuntimeManager.resolveAvailableImageDigest", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
+
+  test("uses the same catalog image pull secret resolution as deployment startup", async () => {
+    mockCreateDockerRegistrySecrets.mockResolvedValueOnce([
+      "mcp-server-server-1-regcred-registry.example.com-ci",
+    ]);
+    mockResolveAvailableImageDigest.mockResolvedValueOnce("sha256:resolved");
+
+    const mockLoadFromDefault = vi
+      .spyOn(k8s.KubeConfig.prototype, "loadFromDefault")
+      .mockImplementation(() => {});
+    const mockMakeApiClient = vi
+      .spyOn(k8s.KubeConfig.prototype, "makeApiClient")
+      .mockReturnValue({} as k8s.CoreV1Api);
+
+    const { secretManager } = await import("@/secrets-manager");
+    vi.mocked(secretManager).mockReturnValue({
+      getSecret: vi.fn().mockResolvedValue({
+        secret: {
+          "__regcred_password:registry.example.com:ci": "registry-password",
+          OTHER_VALUE: "must-not-be-forwarded",
+        },
+      }),
+    } as unknown as ReturnType<typeof secretManager>);
+
+    const InternalMcpCatalogModel = (
+      await import("@/models/internal-mcp-catalog")
+    ).default;
+    const imagePullSecrets = [
+      { source: "existing" as const, name: "existing-regcred" },
+      {
+        source: "credentials" as const,
+        server: "registry.example.com",
+        username: "ci",
+      },
+    ];
+    vi.mocked(InternalMcpCatalogModel.findById).mockResolvedValueOnce({
+      id: "catalog-1",
+      serverType: "local",
+      localConfig: {
+        imagePullSecrets,
+        serviceAccount: "mcp-runner",
+      },
+      localConfigSecretId: "catalog-secret-id",
+    } as unknown as Awaited<
+      ReturnType<typeof InternalMcpCatalogModel.findById>
+    >);
+
+    const McpServerModel = (await import("@/models/mcp-server")).default;
+    vi.mocked(McpServerModel.findById).mockResolvedValueOnce({
+      id: "server-1",
+      name: "private-registry-server",
+      catalogId: "catalog-1",
+    } as unknown as Awaited<ReturnType<typeof McpServerModel.findById>>);
+
+    const { McpServerRuntimeManager } = await import("./manager");
+    const manager = new McpServerRuntimeManager();
+    const mockDeployment = {
+      createDockerRegistrySecrets: mockCreateDockerRegistrySecrets,
+      resolveAvailableImageDigest: mockResolveAvailableImageDigest,
+    };
+    (
+      manager as unknown as {
+        mcpServerIdToDeploymentMap: Map<string, typeof mockDeployment>;
+      }
+    ).mcpServerIdToDeploymentMap.set("server-1", mockDeployment);
+
+    await expect(
+      manager.resolveAvailableImageDigest(
+        "server-1",
+        "registry.example.com/mcp/server:latest",
+      ),
+    ).resolves.toBe("sha256:resolved");
+
+    expect(mockCreateDockerRegistrySecrets).toHaveBeenCalledWith(
+      {
+        "__regcred_password:registry.example.com:ci": "registry-password",
+      },
+      imagePullSecrets,
+    );
+    expect(mockResolveAvailableImageDigest).toHaveBeenCalledWith({
+      image: "registry.example.com/mcp/server:latest",
+      resolvedImagePullSecretNames: [
+        { name: "existing-regcred" },
+        { name: "mcp-server-server-1-regcred-registry.example.com-ci" },
+      ],
+    });
+
+    mockLoadFromDefault.mockRestore();
+    mockMakeApiClient.mockRestore();
   });
 });
 

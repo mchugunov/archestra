@@ -11,7 +11,8 @@ import {
   McpServerModel,
 } from "@/models";
 import { secretManager } from "@/secrets-manager";
-import type { McpServer } from "@/types";
+import type { InternalMcpCatalog, McpServer } from "@/types";
+import { resolveMcpImagePullSecretNames } from "./image-pull-secrets";
 import K8sDeployment, {
   fetchPlatformPodNodeSelector,
   fetchPlatformPodTolerations,
@@ -302,34 +303,8 @@ export class McpServerRuntimeManager {
         );
       }
 
-      // Create docker-registry secrets for imagePullSecrets with credentials
-      // and resolve all imagePullSecrets names for the pod spec.
-      // Regcred passwords are stored in the catalog's localConfigSecretId, not
-      // the per-user mcpServer.secretId, so fetch them separately.
-      const imagePullSecrets = catalogItem?.localConfig?.imagePullSecrets;
-      const regcredSecretData: Record<string, string> = {};
-      if (catalogItem?.localConfigSecretId && imagePullSecrets?.length) {
-        const catalogSecret = await secretManager().getSecret(
-          catalogItem.localConfigSecretId,
-        );
-        if (catalogSecret?.secret && typeof catalogSecret.secret === "object") {
-          for (const [key, value] of Object.entries(catalogSecret.secret)) {
-            if (key.startsWith("__regcred_password:")) {
-              regcredSecretData[key] = String(value);
-            }
-          }
-        }
-      }
-      const generatedRegcredNames =
-        await k8sDeployment.createDockerRegistrySecrets(
-          regcredSecretData,
-          imagePullSecrets,
-        );
       const resolvedImagePullSecretNames =
-        K8sDeployment.collectImagePullSecretNames(
-          imagePullSecrets,
-          generatedRegcredNames,
-        );
+        await this.resolveImagePullSecretNames(k8sDeployment, catalogItem);
 
       await k8sDeployment.startOrCreateDeployment(resolvedImagePullSecretNames);
       logger.info(`Successfully started MCP server deployment ${id} (${name})`);
@@ -708,6 +683,37 @@ export class McpServerRuntimeManager {
   }
 
   /**
+   * Resolve the digest Kubernetes would currently pull for an MCP server image.
+   */
+  async resolveAvailableImageDigest(
+    mcpServerId: string,
+    image: string,
+  ): Promise<string | null> {
+    const k8sDeployment = await this.getOrLoadDeployment(mcpServerId);
+    if (!k8sDeployment) {
+      return null;
+    }
+
+    const mcpServer = await McpServerModel.findById(mcpServerId);
+    if (!mcpServer?.catalogId) {
+      return k8sDeployment.resolveAvailableImageDigest({ image });
+    }
+
+    const catalogItem = await InternalMcpCatalogModel.findById(
+      mcpServer.catalogId,
+    );
+    const resolvedImagePullSecretNames = await this.resolveImagePullSecretNames(
+      k8sDeployment,
+      catalogItem,
+    );
+
+    return k8sDeployment.resolveAvailableImageDigest({
+      image,
+      resolvedImagePullSecretNames,
+    });
+  }
+
+  /**
    * Get the appropriate kubectl command based on pod status
    * Returns logs command if pod is running, describe command otherwise
    */
@@ -925,6 +931,17 @@ export class McpServerRuntimeManager {
         "Failed to list secrets for team-id backfill",
       );
     }
+  }
+
+  private async resolveImagePullSecretNames(
+    k8sDeployment: K8sDeployment,
+    catalogItem: InternalMcpCatalog | null | undefined,
+  ) {
+    return resolveMcpImagePullSecretNames({
+      catalogItem,
+      createDockerRegistrySecrets: (secretData, imagePullSecrets) =>
+        k8sDeployment.createDockerRegistrySecrets(secretData, imagePullSecrets),
+    });
   }
 
   /**
