@@ -23,7 +23,7 @@ export const collectImagePullSecretNames = (options: {
   }
 
   return names;
-}
+};
 
 // Create docker-registry secrets for imagePullSecrets with credentials
 // and resolve all imagePullSecrets names for the pod spec.
@@ -47,7 +47,7 @@ export const resolveMcpImagePullSecretNames = async (options: {
     imagePullSecrets,
     generatedRegcredNames,
   });
-}
+};
 
 async function getRegcredSecretData(
   catalogItem: InternalMcpCatalog | null | undefined,
