@@ -1,17 +1,24 @@
 import { vi } from "vitest";
 import type { ImageUpdateRuntime } from "@/k8s/mcp-server-runtime";
 import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-state";
+import { McpImageUpdateCheckerService } from "@/services/mcp-image-update-checker";
 import { describe, expect, test } from "@/test";
+import type { TaskHandler } from "@/types";
 import { handleCheckMcpImageUpdates } from "./check-mcp-image-updates-handler";
 
-const CHECKED_AT = new Date("2026-01-01T00:10:00.000Z");
-
 describe("handleCheckMcpImageUpdates", () => {
+  test("is compatible with the task queue handler contract", async () => {
+    const taskHandler: TaskHandler = handleCheckMcpImageUpdates;
+
+    await expect(taskHandler({})).resolves.toBeUndefined();
+  });
+
   test("loads eligible local MCP servers and does not crash when none exist", async () => {
     const runtime = createRuntime();
+    const service = new McpImageUpdateCheckerService({ runtime });
 
     await expect(
-      handleCheckMcpImageUpdates({}, { runtime, checkedAt: CHECKED_AT }),
+      service.handleCheckMcpImageUpdates({}),
     ).resolves.toBeUndefined();
 
     expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
@@ -49,8 +56,9 @@ describe("handleCheckMcpImageUpdates", () => {
       runningDigest: "sha256:same",
       availableDigest: "sha256:same",
     });
+    const service = new McpImageUpdateCheckerService({ runtime });
 
-    await handleCheckMcpImageUpdates({}, { runtime, checkedAt: CHECKED_AT });
+    await service.handleCheckMcpImageUpdates({});
 
     const eligibleState =
       await McpServerImageUpdateStateModel.findByMcpServerId(eligibleServer.id);
@@ -67,9 +75,9 @@ describe("handleCheckMcpImageUpdates", () => {
     );
     expect(eligibleState).toMatchObject({
       mcpServerId: eligibleServer.id,
-      lastCheckedAt: CHECKED_AT,
       status: "up_to_date",
     });
+    expect(eligibleState?.lastCheckedAt).toBeInstanceOf(Date);
     expect(disabledState).toBeNull();
   });
 });

@@ -2,9 +2,21 @@ import { vi } from "vitest";
 import type { ImageUpdateRuntime } from "@/k8s/mcp-server-runtime";
 import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-state";
 import { describe, expect, test } from "@/test";
-import { processMcpServerImageUpdateCheck } from "./mcp-image-update-checker";
+import { McpImageUpdateCheckerService } from "./mcp-image-update-checker";
 
 const CHECKED_AT = new Date("2026-01-01T00:10:00.000Z");
+
+async function setupTestRuntime(makeMcpServer: any, catalog: any) {
+  const server = await makeMcpServer({
+    catalogId: catalog.id,
+    serverType: "local",
+    imageUpdateCheckEnabled: true,
+  });
+  const runtime = createRuntime();
+
+  const service = new McpImageUpdateCheckerService(runtime);
+  return {server, runtime, service};
+}
 
 describe("processMcpServerImageUpdateCheck", () => {
   test("persists up_to_date for digest-pinned images without probing runtime", async ({
@@ -17,16 +29,10 @@ describe("processMcpServerImageUpdateCheck", () => {
         dockerImage: "registry.example.com/mcp/server@sha256:pinned123",
       },
     });
-    const server = await makeMcpServer({
-      catalogId: catalog.id,
-      serverType: "local",
-      imageUpdateCheckEnabled: true,
-    });
-    const runtime = createRuntime();
+    const {server, runtime, service} = await setupTestRuntime(makeMcpServer, catalog);
 
-    await processMcpServerImageUpdateCheck({
+    await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
-      runtime,
       checkedAt: CHECKED_AT,
     });
 
@@ -65,9 +71,10 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableDigest: "containerd://sha256:same",
     });
 
-    await processMcpServerImageUpdateCheck({
+    const service = new McpImageUpdateCheckerService(runtime);
+
+    await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
-      runtime,
       checkedAt: CHECKED_AT,
     });
 
@@ -108,9 +115,10 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableDigest: "sha256:new",
     });
 
-    await processMcpServerImageUpdateCheck({
+    const service = new McpImageUpdateCheckerService(runtime);
+
+    await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
-      runtime,
       checkedAt: CHECKED_AT,
     });
 
@@ -146,9 +154,10 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableDigest: "sha256:new",
     });
 
-    await processMcpServerImageUpdateCheck({
+    const service = new McpImageUpdateCheckerService(runtime);
+
+    await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
-      runtime,
       checkedAt: CHECKED_AT,
     });
 
@@ -167,16 +176,10 @@ describe("processMcpServerImageUpdateCheck", () => {
       serverType: "local",
       localConfig: { command: "node" },
     });
-    const server = await makeMcpServer({
-      catalogId: catalog.id,
-      serverType: "local",
-      imageUpdateCheckEnabled: true,
-    });
-    const runtime = createRuntime();
+    const {server, runtime, service} = await setupTestRuntime(makeMcpServer, catalog);
 
-    await processMcpServerImageUpdateCheck({
+    await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
-      runtime,
       checkedAt: CHECKED_AT,
     });
 
@@ -207,9 +210,10 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableDigest: "sha256:new",
     });
 
-    await processMcpServerImageUpdateCheck({
+    const service = new McpImageUpdateCheckerService(runtime);
+
+    await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
-      runtime,
       checkedAt: CHECKED_AT,
     });
 
@@ -238,9 +242,10 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableDigest: new Error("probe digest failed"),
     });
 
-    await processMcpServerImageUpdateCheck({
+    const service = new McpImageUpdateCheckerService(runtime);
+
+    await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
-      runtime,
       checkedAt: CHECKED_AT,
     });
 
