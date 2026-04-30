@@ -13,7 +13,10 @@ import {
 import { secretManager } from "@/secrets-manager";
 import type { InternalMcpCatalog, McpServer } from "@/types";
 import { resolveMcpImagePullSecretNames } from "./image-pull-secrets";
-import type { ImageUpdateRuntime } from "./image-update-runtime";
+import type {
+  ImageUpdateRuntime,
+  ResolveAvailableImageDigestRuntimeParams,
+} from "./image-update-runtime";
 import K8sDeployment, {
   fetchPlatformPodNodeSelector,
   fetchPlatformPodTolerations,
@@ -714,9 +717,9 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
    * Resolve the digest Kubernetes would currently pull for an MCP server image.
    */
   async resolveAvailableImageDigest(
-    mcpServerId: string,
-    image: string,
+    params: ResolveAvailableImageDigestRuntimeParams,
   ): Promise<string | null> {
+    const { mcpServerId, image, options = {} } = params;
     const k8sDeployment = await this.getOrLoadDeployment(mcpServerId);
     if (!k8sDeployment) {
       return null;
@@ -724,7 +727,10 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
 
     const mcpServer = await McpServerModel.findById(mcpServerId);
     if (!mcpServer?.catalogId) {
-      return k8sDeployment.resolveAvailableImageDigest({ image });
+      return k8sDeployment.resolveAvailableImageDigest({
+        image,
+        timeoutMs: options.timeoutMs,
+      });
     }
 
     const catalogItem = await InternalMcpCatalogModel.findById(
@@ -738,6 +744,7 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
     return k8sDeployment.resolveAvailableImageDigest({
       image,
       resolvedImagePullSecretNames,
+      timeoutMs: options.timeoutMs,
     });
   }
 

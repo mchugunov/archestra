@@ -981,10 +981,11 @@ describe("McpServerRuntimeManager.resolveAvailableImageDigest", () => {
     ).mcpServerIdToDeploymentMap.set("server-1", mockDeployment);
 
     await expect(
-      manager.resolveAvailableImageDigest(
-        "server-1",
-        "registry.example.com/mcp/server:latest",
-      ),
+      manager.resolveAvailableImageDigest({
+        mcpServerId: "server-1",
+        image: "registry.example.com/mcp/server:latest",
+        options: { timeoutMs: 12_345 },
+      }),
     ).resolves.toBe("sha256:resolved");
 
     expect(mockCreateDockerRegistrySecrets).toHaveBeenCalledWith(
@@ -999,6 +1000,7 @@ describe("McpServerRuntimeManager.resolveAvailableImageDigest", () => {
         { name: "existing-regcred" },
         { name: "mcp-server-server-1-regcred-registry.example.com-ci" },
       ],
+      timeoutMs: 12_345,
     });
 
     mockLoadFromDefault.mockRestore();

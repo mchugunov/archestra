@@ -1,5 +1,8 @@
 import { vi } from "vitest";
-import type { ImageUpdateRuntime } from "@/k8s/mcp-server-runtime";
+import type {
+  ImageUpdateRuntime,
+  ResolveAvailableImageDigestRuntimeParams,
+} from "@/k8s/mcp-server-runtime";
 import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-state";
 import { describe, expect, test } from "@/test";
 import { McpImageUpdateCheckerService } from "./mcp-image-update-checker";
@@ -78,10 +81,11 @@ describe("processMcpServerImageUpdateCheck", () => {
     );
 
     expect(runtime.getRunningImageDigest).toHaveBeenCalledWith(server.id);
-    expect(runtime.resolveAvailableImageDigest).toHaveBeenCalledWith(
-      server.id,
+    expect(runtime.resolveAvailableImageDigest).toHaveBeenCalledWith({
+      mcpServerId: server.id,
       image,
-    );
+      options: { timeoutMs: 60_000 },
+    });
     expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(state).toMatchObject({
       mcpServerId: server.id,
@@ -267,6 +271,42 @@ describe("processMcpServerImageUpdateCheck", () => {
 
     expect(state).toBeNull();
   });
+
+  test("passes custom available digest timeout to runtime", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const image = "registry.example.com/mcp/server:stable";
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: image },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:same",
+      availableDigest: "sha256:same",
+    });
+
+    const service = new McpImageUpdateCheckerService({
+      availableDigestTimeoutMs: 1_234,
+      runtime,
+    });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    expect(runtime.resolveAvailableImageDigest).toHaveBeenCalledWith({
+      mcpServerId: server.id,
+      image,
+      options: { timeoutMs: 1_234 },
+    });
+  });
 });
 
 function createRuntime(
@@ -279,7 +319,11 @@ function createRuntime(
     getRunningImageDigest:
       vi.fn<(mcpServerId: string) => Promise<string | null>>(),
     resolveAvailableImageDigest:
-      vi.fn<(mcpServerId: string, image: string) => Promise<string | null>>(),
+      vi.fn<
+        (
+          params: ResolveAvailableImageDigestRuntimeParams,
+        ) => Promise<string | null>
+      >(),
     rolloutRestartServer: vi.fn<(mcpServerId: string) => Promise<void>>(),
   } satisfies ImageUpdateRuntime;
 
