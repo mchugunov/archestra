@@ -13,6 +13,7 @@ import {
 import { secretManager } from "@/secrets-manager";
 import type { InternalMcpCatalog, McpServer } from "@/types";
 import { resolveMcpImagePullSecretNames } from "./image-pull-secrets";
+import type { ImageUpdateRuntime } from "./image-update-runtime";
 import K8sDeployment, {
   fetchPlatformPodNodeSelector,
   fetchPlatformPodTolerations,
@@ -28,7 +29,7 @@ import type {
  * McpServerRuntimeManager manages MCP servers running in Kubernetes.
  * @public — exported for testability
  */
-export class McpServerRuntimeManager {
+export class McpServerRuntimeManager implements ImageUpdateRuntime {
   private k8sApi?: k8s.CoreV1Api;
   private k8sAppsApi?: k8s.AppsV1Api;
   private k8sAttach?: k8s.Attach;
