@@ -1,6 +1,7 @@
 import db, { schema } from "@/database";
 import { describe, expect, test } from "@/test";
 import McpServerModel from "./mcp-server";
+import McpServerImageUpdateStateModel from "./mcp-server-image-update-state";
 import McpServerUserModel from "./mcp-server-user";
 
 describe("McpServerModel", () => {
@@ -221,6 +222,56 @@ describe("McpServerModel", () => {
       const matching = allServers.filter((s) => s.id === server.id);
       expect(matching).toHaveLength(1);
       expect(matching[0].users).toHaveLength(3);
+    });
+
+    test("includes image update state when it exists", async ({
+      makeMcpServer,
+    }) => {
+      const server = await makeMcpServer();
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: server.id,
+        lastCheckedAt: new Date("2026-01-02T03:04:05Z"),
+        runningImageDigest: "sha256:running",
+        availableImageDigest: "sha256:available",
+        status: "update_available",
+      });
+
+      const allServers = await McpServerModel.findAll(undefined, true);
+
+      const found = allServers.find((s) => s.id === server.id);
+      expect(found?.imageUpdateState).toMatchObject({
+        mcpServerId: server.id,
+        runningImageDigest: "sha256:running",
+        availableImageDigest: "sha256:available",
+        status: "update_available",
+      });
+    });
+  });
+
+  describe("findById", () => {
+    test("includes image update state when it exists", async ({
+      makeMcpServer,
+    }) => {
+      const server = await makeMcpServer();
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: server.id,
+        lastCheckedAt: new Date("2026-01-02T03:04:05Z"),
+        runningImageDigest: "sha256:running",
+        availableImageDigest: "sha256:available",
+        status: "up_to_date",
+        lastRestartedAt: new Date("2026-01-02T03:05:05Z"),
+      });
+
+      const found = await McpServerModel.findById(server.id);
+
+      expect(found?.imageUpdateState).toMatchObject({
+        mcpServerId: server.id,
+        runningImageDigest: "sha256:running",
+        availableImageDigest: "sha256:available",
+        status: "up_to_date",
+      });
+      expect(found?.imageUpdateState?.lastCheckedAt).toBeInstanceOf(Date);
+      expect(found?.imageUpdateState?.lastRestartedAt).toBeInstanceOf(Date);
     });
   });
 

@@ -22,6 +22,7 @@ const {
   getMcpServer,
   reauthenticateMcpServer,
   reinstallMcpServer,
+  updateMcpServer,
 } = archestraApiSdk;
 
 type McpServersQuery = Partial<
@@ -352,6 +353,43 @@ export function useReauthenticateMcpServer() {
     },
     onError: (_error, variables) => {
       toast.error(`Failed to re-authenticate ${variables.name}`);
+    },
+  });
+}
+
+export function useUpdateMcpServerImageUpdateSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (
+      data: { id: string; name: string } & NonNullable<
+        archestraApiTypes.UpdateMcpServerData["body"]
+      >,
+    ) => {
+      const { id, name, ...body } = data;
+      const response = await updateMcpServer({
+        path: { id },
+        body,
+      });
+      if (response.error) {
+        handleApiError(response.error);
+        return null;
+      }
+      return { server: response.data, name };
+    },
+    onSuccess: async (result, variables) => {
+      if (!result?.server) {
+        return;
+      }
+      await queryClient.refetchQueries({ queryKey: ["mcp-servers"] });
+      queryClient.invalidateQueries({
+        queryKey: ["mcp-servers", variables.id],
+      });
+      toast.success(`Updated image update settings for ${result.name}`);
+    },
+    onError: (_error, variables) => {
+      toast.error(
+        `Failed to update image update settings for ${variables.name}`,
+      );
     },
   });
 }

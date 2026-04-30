@@ -7,6 +7,7 @@ import {
 import { z } from "zod";
 import { schema } from "@/database";
 import { InternalMcpCatalogServerTypeSchema } from "./mcp-catalog";
+import { SelectMcpServerImageUpdateStateSchema } from "./mcp-server-image-update-state";
 import { ResourceVisibilityScopeSchema } from "./visibility";
 
 export const LocalMcpServerInstallationStatusSchema = z.enum(
@@ -49,6 +50,7 @@ export const SelectMcpServerSchema = createSelectSchema(
     .optional(),
   localInstallationStatus: LocalMcpServerInstallationStatusSchema,
   secretStorageType: SecretStorageTypeSchema.optional(),
+  imageUpdateState: SelectMcpServerImageUpdateStateSchema.nullable().optional(),
 });
 
 export const InsertMcpServerSchema = createInsertSchema(schema.mcpServersTable)

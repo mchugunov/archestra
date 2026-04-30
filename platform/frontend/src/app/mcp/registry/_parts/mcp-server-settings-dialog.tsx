@@ -31,6 +31,10 @@ import {
 } from "./deployment-status";
 import { EditCatalogContent } from "./edit-catalog-dialog";
 import { ManageUsersContent } from "./manage-users-dialog";
+import {
+  McpImageUpdateSettings,
+  type McpImageUpdateSettingsInstall,
+} from "./mcp-image-update-settings";
 import { McpLogsContent, type McpLogsTab } from "./mcp-logs-dialog";
 import type { CatalogItem } from "./mcp-server-card";
 import { PresetsSection } from "./presets-section";
@@ -67,13 +71,7 @@ interface McpServerSettingsDialogProps {
   onAddSharedConnection?: (teamId: string) => void;
   onAddOrgConnection?: () => void;
   // Debug
-  installs: {
-    id: string;
-    name: string;
-    ownerEmail?: string | null;
-    teamDetails?: { teamId: string; name: string } | null;
-    presetLabel?: string | null;
-  }[];
+  installs: McpImageUpdateSettingsInstall[];
   deploymentStatuses: Record<string, McpDeploymentStatusEntry>;
   deploymentServerIds: string[];
   onReinstall: () => void | Promise<void>;
@@ -364,6 +362,12 @@ export function McpServerSettingsDialog({
                   keepOpenOnSave
                   onDirtyChange={setIsConfigDirty}
                   submitRef={configSubmitRef}
+                  contentBeforeFields={
+                    <McpImageUpdateSettings
+                      installs={installs}
+                      variant={variant}
+                    />
+                  }
                 />
               )}
 

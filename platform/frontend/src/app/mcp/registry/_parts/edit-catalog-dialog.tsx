@@ -41,6 +41,8 @@ interface EditCatalogContentProps {
   onDirtyChange?: (isDirty: boolean) => void;
   /** Ref to imperatively trigger form submission */
   submitRef?: React.MutableRefObject<(() => Promise<void>) | null>;
+  /** Optional content rendered above catalog fields when embedded. */
+  contentBeforeFields?: React.ReactNode;
 }
 
 export function EditCatalogContent({
@@ -49,6 +51,7 @@ export function EditCatalogContent({
   keepOpenOnSave = false,
   onDirtyChange,
   submitRef,
+  contentBeforeFields,
 }: EditCatalogContentProps) {
   const [pendingValues, setPendingValues] =
     useState<McpCatalogFormValues | null>(null);
@@ -93,32 +96,31 @@ export function EditCatalogContent({
         nameDisabled
         onDirtyChange={onDirtyChange}
         submitRef={submitRef}
-        footer={({ isDirty, onReset }) => {
-          if (keepOpenOnSave && !isDirty) return null;
-          const Footer = keepOpenOnSave ? DialogStickyFooter : DialogFooter;
-          return (
-            <Footer className={keepOpenOnSave ? "mt-0" : undefined}>
-              {keepOpenOnSave ? (
-                <Button variant="outline" onClick={onReset} type="button">
-                  Discard changes
-                </Button>
-              ) : (
-                <Button variant="outline" onClick={onClose} type="button">
-                  Cancel
-                </Button>
-              )}
-              <Button
-                type="submit"
-                disabled={updateMutation.isPending || !isDirty}
-              >
-                {updateMutation.isPending ? "Saving..." : "Save Changes"}
+        catalogButton={contentBeforeFields}
+      footer={({ isDirty, onReset }) => {
+        if (keepOpenOnSave && !isDirty) return null;
+        const Footer = keepOpenOnSave ? DialogStickyFooter : DialogFooter;
+        return (
+          <Footer className={keepOpenOnSave ? "mt-0" : undefined}>
+            {keepOpenOnSave ? (
+              <Button variant="outline" onClick={onReset} type="button">
+                Discard changes
               </Button>
-            </Footer>
-          );
-        }}
-      />
-
-      <CascadeReinstallConfirmDialog
+            ) : (
+              <Button variant="outline" onClick={onClose} type="button">
+                Cancel
+              </Button>
+            )}
+            <Button
+              type="submit"
+              disabled={updateMutation.isPending || !isDirty}
+            >
+              {updateMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </Footer>
+        );
+      }}
+    /><CascadeReinstallConfirmDialog
         open={pendingValues !== null}
         onOpenChange={(v) => !v && setPendingValues(null)}
         onConfirm={async () => {

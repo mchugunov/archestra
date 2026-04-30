@@ -37242,6 +37242,15 @@ export type GetMcpServersResponses = {
             createdAt: string;
         } | null;
         secretStorageType?: 'vault' | 'external_vault' | 'database' | 'none';
+        imageUpdateState?: {
+            mcpServerId: string;
+            lastCheckedAt: string | null;
+            runningImageDigest: string | null;
+            availableImageDigest: string | null;
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'restart_triggered';
+            lastRestartedAt: string | null;
+            updatedAt: string;
+        } | null;
     }>;
 };
 
@@ -37383,6 +37392,15 @@ export type InstallMcpServerResponses = {
             createdAt: string;
         } | null;
         secretStorageType?: 'vault' | 'external_vault' | 'database' | 'none';
+        imageUpdateState?: {
+            mcpServerId: string;
+            lastCheckedAt: string | null;
+            runningImageDigest: string | null;
+            availableImageDigest: string | null;
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'restart_triggered';
+            lastRestartedAt: string | null;
+            updatedAt: string;
+        } | null;
     };
 };
 
@@ -37583,6 +37601,15 @@ export type GetMcpServerResponses = {
             createdAt: string;
         } | null;
         secretStorageType?: 'vault' | 'external_vault' | 'database' | 'none';
+        imageUpdateState?: {
+            mcpServerId: string;
+            lastCheckedAt: string | null;
+            runningImageDigest: string | null;
+            availableImageDigest: string | null;
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'restart_triggered';
+            lastRestartedAt: string | null;
+            updatedAt: string;
+        } | null;
     };
 };
 
@@ -37701,6 +37728,15 @@ export type UpdateMcpServerResponses = {
             createdAt: string;
         } | null;
         secretStorageType?: 'vault' | 'external_vault' | 'database' | 'none';
+        imageUpdateState?: {
+            mcpServerId: string;
+            lastCheckedAt: string | null;
+            runningImageDigest: string | null;
+            availableImageDigest: string | null;
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'restart_triggered';
+            lastRestartedAt: string | null;
+            updatedAt: string;
+        } | null;
     };
 };
 
@@ -37826,6 +37862,15 @@ export type ReauthenticateMcpServerResponses = {
             createdAt: string;
         } | null;
         secretStorageType?: 'vault' | 'external_vault' | 'database' | 'none';
+        imageUpdateState?: {
+            mcpServerId: string;
+            lastCheckedAt: string | null;
+            runningImageDigest: string | null;
+            availableImageDigest: string | null;
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'restart_triggered';
+            lastRestartedAt: string | null;
+            updatedAt: string;
+        } | null;
     };
 };
 
@@ -38223,6 +38268,15 @@ export type ReinstallMcpServerResponses = {
             createdAt: string;
         } | null;
         secretStorageType?: 'vault' | 'external_vault' | 'database' | 'none';
+        imageUpdateState?: {
+            mcpServerId: string;
+            lastCheckedAt: string | null;
+            runningImageDigest: string | null;
+            availableImageDigest: string | null;
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'restart_triggered';
+            lastRestartedAt: string | null;
+            updatedAt: string;
+        } | null;
     };
 };
 

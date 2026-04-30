@@ -179,6 +179,7 @@ class McpServerModel {
         teamName: schema.teamsTable.name,
         secretIsVault: schema.secretsTable.isVault,
         secretIsByosVault: schema.secretsTable.isByosVault,
+        imageUpdateState: schema.mcpServerImageUpdateStatesTable,
         assignedUserId: schema.mcpServerUsersTable.userId,
         assignedUserEmail: assignedUsersTable.email,
         assignedUserCreatedAt: schema.mcpServerUsersTable.createdAt,
@@ -199,6 +200,13 @@ class McpServerModel {
       .leftJoin(
         schema.secretsTable,
         eq(schema.mcpServersTable.secretId, schema.secretsTable.id),
+      )
+      .leftJoin(
+        schema.mcpServerImageUpdateStatesTable,
+        eq(
+          schema.mcpServersTable.id,
+          schema.mcpServerImageUpdateStatesTable.mcpServerId,
+        ),
       )
       .leftJoin(
         schema.mcpServerUsersTable,
@@ -272,6 +280,7 @@ class McpServerModel {
           userDetails: [],
           teamDetails,
           secretStorageType,
+          imageUpdateState: row.imageUpdateState,
         });
       }
 
@@ -318,6 +327,7 @@ class McpServerModel {
         teamName: schema.teamsTable.name,
         secretIsVault: schema.secretsTable.isVault,
         secretIsByosVault: schema.secretsTable.isByosVault,
+        imageUpdateState: schema.mcpServerImageUpdateStatesTable,
       })
       .from(schema.mcpServersTable)
       .leftJoin(
@@ -331,6 +341,13 @@ class McpServerModel {
       .leftJoin(
         schema.secretsTable,
         eq(schema.mcpServersTable.secretId, schema.secretsTable.id),
+      )
+      .leftJoin(
+        schema.mcpServerImageUpdateStatesTable,
+        eq(
+          schema.mcpServersTable.id,
+          schema.mcpServerImageUpdateStatesTable.mcpServerId,
+        ),
       )
       .where(eq(schema.mcpServersTable.id, id));
 
@@ -363,6 +380,7 @@ class McpServerModel {
       userDetails,
       teamDetails,
       secretStorageType,
+      imageUpdateState: result.imageUpdateState,
     };
   }
 
