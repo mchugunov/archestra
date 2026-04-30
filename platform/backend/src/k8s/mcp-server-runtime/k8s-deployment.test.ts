@@ -762,6 +762,47 @@ describe("K8sDeployment.generateDeploymentSpec", () => {
 
     const container = deploymentSpec.spec?.template.spec?.containers[0];
     expect(container?.image).toBe("ghcr.io/my-org/custom-mcp-server:v2.1.0");
+    expect(container?.imagePullPolicy).toBe("Always");
+  });
+
+  test("does not force imagePullPolicy for digest-pinned deployment images", () => {
+    const mcpServer: McpServer = {
+      id: "digest-image-id",
+      name: "digest-image-server",
+      catalogId: "catalog-digest",
+      // biome-ignore lint/suspicious/noExplicitAny: Mock data for testing
+    } as any;
+    const k8sDeployment = createMockK8sDeployment(mcpServer);
+
+    const deploymentSpec = k8sDeployment.generateDeploymentSpec(
+      "ghcr.io/my-org/custom-mcp-server@sha256:abc123",
+      { command: "python" },
+      false,
+      8080,
+    );
+
+    const container = deploymentSpec.spec?.template.spec?.containers[0];
+    expect(container?.imagePullPolicy).toBeUndefined();
+  });
+
+  test("keeps Never imagePullPolicy for local deployment images", () => {
+    const mcpServer: McpServer = {
+      id: "local-image-id",
+      name: "local-image-server",
+      catalogId: "catalog-local",
+      // biome-ignore lint/suspicious/noExplicitAny: Mock data for testing
+    } as any;
+    const k8sDeployment = createMockK8sDeployment(mcpServer);
+
+    const deploymentSpec = k8sDeployment.generateDeploymentSpec(
+      "local-mcp-image:latest",
+      { command: "node" },
+      false,
+      8080,
+    );
+
+    const container = deploymentSpec.spec?.template.spec?.containers[0];
+    expect(container?.imagePullPolicy).toBe("Never");
   });
 
   test("generates deploymentSpec with empty arguments array when not provided", () => {
@@ -3619,6 +3660,62 @@ describe("K8sDeployment.stopDeployment", () => {
     const k8sDeployment = createK8sDeploymentWithMockedApis({}, mockK8sAppsApi);
 
     await expect(k8sDeployment.stopDeployment()).rejects.toEqual(serverError);
+  });
+});
+
+describe("K8sDeployment.rolloutRestartDeployment", () => {
+  function createK8sDeploymentWithMockedAppsApi(
+    mockK8sAppsApi: Partial<k8s.AppsV1Api>,
+  ): K8sDeployment {
+    const mockMcpServer = {
+      id: "test-server-id",
+      name: "test-server",
+      catalogId: "test-catalog-id",
+      secretId: null,
+      ownerId: null,
+      reinstallRequired: false,
+      localInstallationStatus: "idle",
+      localInstallationError: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as McpServer;
+
+    return new K8sDeployment({
+      mcpServer: mockMcpServer,
+      k8sApi: {} as k8s.CoreV1Api,
+      k8sAppsApi: mockK8sAppsApi as k8s.AppsV1Api,
+      k8sAttach: {} as Attach,
+      k8sLog: {} as Log,
+      k8sExec: {} as Exec,
+      namespace: "default",
+      catalogItem: null,
+    });
+  }
+
+  test("patches pod template annotation to trigger rollout restart", async () => {
+    const restartedAt = new Date("2026-01-01T00:10:00.000Z");
+    const mockPatchDeployment = vi.fn().mockResolvedValue({});
+    const k8sDeployment = createK8sDeploymentWithMockedAppsApi({
+      patchNamespacedDeployment: mockPatchDeployment,
+    });
+
+    await k8sDeployment.rolloutRestartDeployment(restartedAt);
+
+    expect(mockPatchDeployment).toHaveBeenCalledWith({
+      name: "mcp-test-server",
+      namespace: "default",
+      body: {
+        spec: {
+          template: {
+            metadata: {
+              annotations: {
+                "kubectl.kubernetes.io/restartedAt": restartedAt.toISOString(),
+              },
+            },
+          },
+        },
+      },
+    });
   });
 });
 

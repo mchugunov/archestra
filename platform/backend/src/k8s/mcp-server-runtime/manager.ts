@@ -546,6 +546,33 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
   }
 
   /**
+   * Restart a single MCP server Deployment through Kubernetes rollout restart.
+   */
+  async rolloutRestartServer(mcpServerId: string): Promise<void> {
+    logger.info(`Rolling restart MCP server deployment: ${mcpServerId}`);
+
+    try {
+      const k8sDeployment = await this.getOrLoadDeployment(mcpServerId);
+      if (!k8sDeployment) {
+        throw new Error(`MCP server deployment ${mcpServerId} not found`);
+      }
+
+      await McpHttpSessionModel.deleteByMcpServerId(mcpServerId);
+      await k8sDeployment.rolloutRestartDeployment();
+
+      logger.info(
+        `MCP server deployment ${mcpServerId} rollout restart triggered successfully`,
+      );
+    } catch (error) {
+      logger.error(
+        { err: error },
+        `Failed to rollout restart MCP server deployment ${mcpServerId}:`,
+      );
+      throw error;
+    }
+  }
+
+  /**
    * Check if an MCP server uses streamable HTTP transport
    */
   async usesStreamableHttp(mcpServerId: string): Promise<boolean> {

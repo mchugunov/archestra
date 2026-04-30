@@ -6,18 +6,6 @@ import { McpImageUpdateCheckerService } from "./mcp-image-update-checker";
 
 const CHECKED_AT = new Date("2026-01-01T00:10:00.000Z");
 
-async function setupTestRuntime(makeMcpServer: any, catalog: any) {
-  const server = await makeMcpServer({
-    catalogId: catalog.id,
-    serverType: "local",
-    imageUpdateCheckEnabled: true,
-  });
-  const runtime = createRuntime();
-
-  const service = new McpImageUpdateCheckerService(runtime);
-  return {server, runtime, service};
-}
-
 describe("processMcpServerImageUpdateCheck", () => {
   test("persists up_to_date for digest-pinned images without probing runtime", async ({
     makeInternalMcpCatalog,
@@ -29,7 +17,13 @@ describe("processMcpServerImageUpdateCheck", () => {
         dockerImage: "registry.example.com/mcp/server@sha256:pinned123",
       },
     });
-    const {server, runtime, service} = await setupTestRuntime(makeMcpServer, catalog);
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    const runtime = createRuntime();
+    const service = new McpImageUpdateCheckerService({ runtime });
 
     await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
@@ -42,6 +36,7 @@ describe("processMcpServerImageUpdateCheck", () => {
 
     expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
     expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
+    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(state).toMatchObject({
       mcpServerId: server.id,
       lastCheckedAt: CHECKED_AT,
@@ -71,7 +66,7 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableDigest: "containerd://sha256:same",
     });
 
-    const service = new McpImageUpdateCheckerService(runtime);
+    const service = new McpImageUpdateCheckerService({ runtime });
 
     await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
@@ -87,6 +82,7 @@ describe("processMcpServerImageUpdateCheck", () => {
       server.id,
       image,
     );
+    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(state).toMatchObject({
       mcpServerId: server.id,
       lastCheckedAt: CHECKED_AT,
@@ -115,7 +111,7 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableDigest: "sha256:new",
     });
 
-    const service = new McpImageUpdateCheckerService(runtime);
+    const service = new McpImageUpdateCheckerService({ runtime });
 
     await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
@@ -126,6 +122,7 @@ describe("processMcpServerImageUpdateCheck", () => {
       server.id,
     );
 
+    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(state).toMatchObject({
       mcpServerId: server.id,
       lastCheckedAt: CHECKED_AT,
@@ -135,7 +132,7 @@ describe("processMcpServerImageUpdateCheck", () => {
     });
   });
 
-  test("persists update_available for changed digests until restart behavior is implemented", async ({
+  test("restarts and persists restart_triggered when digests differ and auto-restart is enabled", async ({
     makeInternalMcpCatalog,
     makeMcpServer,
   }) => {
@@ -154,7 +151,7 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableDigest: "sha256:new",
     });
 
-    const service = new McpImageUpdateCheckerService(runtime);
+    const service = new McpImageUpdateCheckerService({ runtime });
 
     await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
@@ -165,7 +162,15 @@ describe("processMcpServerImageUpdateCheck", () => {
       server.id,
     );
 
-    expect(state?.status).toBe("update_available");
+    expect(runtime.rolloutRestartServer).toHaveBeenCalledWith(server.id);
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: CHECKED_AT,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      status: "restart_triggered",
+      lastRestartedAt: CHECKED_AT,
+    });
   });
 
   test("skips persistence when configured image is missing", async ({
@@ -176,7 +181,13 @@ describe("processMcpServerImageUpdateCheck", () => {
       serverType: "local",
       localConfig: { command: "node" },
     });
-    const {server, runtime, service} = await setupTestRuntime(makeMcpServer, catalog);
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    const runtime = createRuntime();
+    const service = new McpImageUpdateCheckerService({ runtime });
 
     await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
@@ -189,6 +200,7 @@ describe("processMcpServerImageUpdateCheck", () => {
 
     expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
     expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
+    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(state).toBeNull();
   });
 
@@ -210,7 +222,7 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableDigest: "sha256:new",
     });
 
-    const service = new McpImageUpdateCheckerService(runtime);
+    const service = new McpImageUpdateCheckerService({ runtime });
 
     await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
@@ -242,7 +254,7 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableDigest: new Error("probe digest failed"),
     });
 
-    const service = new McpImageUpdateCheckerService(runtime);
+    const service = new McpImageUpdateCheckerService({ runtime });
 
     await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
@@ -268,6 +280,7 @@ function createRuntime(
       vi.fn<(mcpServerId: string) => Promise<string | null>>(),
     resolveAvailableImageDigest:
       vi.fn<(mcpServerId: string, image: string) => Promise<string | null>>(),
+    rolloutRestartServer: vi.fn<(mcpServerId: string) => Promise<void>>(),
   } satisfies ImageUpdateRuntime;
 
   const runningDigest = options.runningDigest ?? "sha256:running";
@@ -283,6 +296,7 @@ function createRuntime(
   } else {
     runtime.resolveAvailableImageDigest.mockResolvedValue(availableDigest);
   }
+  runtime.rolloutRestartServer.mockResolvedValue(undefined);
 
   return runtime;
 }

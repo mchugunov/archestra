@@ -26,8 +26,8 @@ type ProcessMcpServerImageUpdateCheckParams = {
 export class McpImageUpdateCheckerService {
   private readonly runtime: ImageUpdateRuntime;
 
-  constructor(runtime?: ImageUpdateRuntime) {
-    this.runtime = runtime ?? McpServerRuntimeManager;
+  constructor(params: { runtime?: ImageUpdateRuntime } = {}) {
+    this.runtime = params.runtime ?? McpServerRuntimeManager;
   }
 
   async handleCheckMcpImageUpdates(
@@ -98,19 +98,14 @@ export class McpImageUpdateCheckerService {
         return;
       }
 
-      const status: McpServerImageUpdateStatus =
-        runningImageDigest === availableImageDigest
-          ? "up_to_date"
-          : "update_available";
-
-      if (
-        status === "update_available" &&
-        server.imageUpdateAutoRestartEnabled
-      ) {
-        logger.info(
-          { mcpServerId: server.id },
-          "MCP server image update is available; restart will be handled by the restart step",
-        );
+      if (runningImageDigest !== availableImageDigest) {
+        await this.persistChangedImageState({
+          server,
+          checkedAt,
+          runningImageDigest,
+          availableImageDigest,
+        });
+        return;
       }
 
       await this.persistImageUpdateState({
@@ -118,7 +113,7 @@ export class McpImageUpdateCheckerService {
         checkedAt,
         runningImageDigest,
         availableImageDigest,
-        status,
+        status: "up_to_date",
       });
     } catch (error) {
       logger.warn(
@@ -137,20 +132,58 @@ export class McpImageUpdateCheckerService {
     return image || null;
   }
 
+  private async persistChangedImageState(params: {
+    server: McpServer;
+    checkedAt: Date;
+    runningImageDigest: string;
+    availableImageDigest: string;
+  }): Promise<void> {
+    if (!params.server.imageUpdateAutoRestartEnabled) {
+      await this.persistImageUpdateState({
+        mcpServerId: params.server.id,
+        checkedAt: params.checkedAt,
+        runningImageDigest: params.runningImageDigest,
+        availableImageDigest: params.availableImageDigest,
+        status: "update_available",
+      });
+      return;
+    }
+
+    await this.runtime.rolloutRestartServer(params.server.id);
+    await this.persistImageUpdateState({
+      mcpServerId: params.server.id,
+      checkedAt: params.checkedAt,
+      runningImageDigest: params.runningImageDigest,
+      availableImageDigest: params.availableImageDigest,
+      status: "restart_triggered",
+      lastRestartedAt: params.checkedAt,
+    });
+  }
+
   private async persistImageUpdateState(params: {
     mcpServerId: string;
     checkedAt: Date;
     runningImageDigest: string | null;
     availableImageDigest: string | null;
     status: McpServerImageUpdateStatus;
+    lastRestartedAt?: Date | null;
   }): Promise<void> {
-    await McpServerImageUpdateStateModel.upsertLatestState({
+    const state = {
       mcpServerId: params.mcpServerId,
       lastCheckedAt: params.checkedAt,
       runningImageDigest: params.runningImageDigest,
       availableImageDigest: params.availableImageDigest,
       status: params.status,
-    });
+    };
+
+    await McpServerImageUpdateStateModel.upsertLatestState(
+      params.lastRestartedAt === undefined
+        ? state
+        : {
+            ...state,
+            lastRestartedAt: params.lastRestartedAt,
+          },
+    );
   }
 }
 

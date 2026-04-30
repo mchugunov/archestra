@@ -39,6 +39,8 @@ const {
   orchestrator: { mcpServerBaseImage },
 } = config;
 
+const ROLLOUT_RESTART_ANNOTATION = "kubectl.kubernetes.io/restartedAt";
+
 // How long streamLogs will keep an open WS waiting for the pod to become
 // Ready before giving up. 5 minutes covers a slow image pull on first install.
 const POD_READY_WAIT_MS = 5 * TimeInMs.Minute;
@@ -895,12 +897,9 @@ export default class K8sDeployment {
         {
           name: "mcp-server",
           image: dockerImage,
-          // Use Never for local images (without registry/domain prefix)
-          // Registry images typically have a domain or slash (e.g., docker.io/image, myregistry.com/image, or username/image)
+          // Registry tags must pull on rollout restart; local images keep Never.
           imagePullPolicy:
-            dockerImage.includes("/") || dockerImage.includes(".")
-              ? undefined // Let K8s decide (defaults to Always for :latest, IfNotPresent for others)
-              : ("Never" as k8s.V1Container["imagePullPolicy"]), // For local images like "gaggimate-mcp:latest" without registry
+            K8sDeployment.getDeploymentImagePullPolicy(dockerImage),
           env: envVars,
           // Inject all keys from existing K8s Secrets/ConfigMaps as env vars
           ...(localConfig.envFrom?.length
@@ -1834,6 +1833,37 @@ export default class K8sDeployment {
     } finally {
       await this.deleteImageDigestProbePod(podName);
     }
+  }
+
+  async rolloutRestartDeployment(
+    restartedAt: Date = new Date(),
+  ): Promise<void> {
+    const restartedAtIso = restartedAt.toISOString();
+
+    await this.k8sAppsApi.patchNamespacedDeployment({
+      name: this.deploymentName,
+      namespace: this.namespace,
+      body: {
+        spec: {
+          template: {
+            metadata: {
+              annotations: {
+                [ROLLOUT_RESTART_ANNOTATION]: restartedAtIso,
+              },
+            },
+          },
+        },
+      } as unknown as k8s.V1Deployment,
+    });
+
+    this.state = "pending";
+    this.cachedPodName = null;
+    this.cachedPodCreationTime = null;
+
+    logger.info(
+      { deploymentName: this.deploymentName, restartedAt: restartedAtIso },
+      "Triggered MCP server Deployment rollout restart",
+    );
   }
 
   /**
@@ -3050,6 +3080,20 @@ export default class K8sDeployment {
     image: string,
   ): k8s.V1Container["imagePullPolicy"] | undefined {
     return isDigestPinnedImage(image) ? undefined : "Always";
+  }
+
+  private static getDeploymentImagePullPolicy(
+    image: string,
+  ): k8s.V1Container["imagePullPolicy"] | undefined {
+    if (isDigestPinnedImage(image)) {
+      return undefined;
+    }
+
+    if (image.includes("/") || image.includes(".")) {
+      return "Always";
+    }
+
+    return "Never";
   }
 
   private constructImageDigestProbePodName(image: string): string {

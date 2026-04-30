@@ -4,4 +4,5 @@ export interface ImageUpdateRuntime {
     mcpServerId: string,
     image: string,
   ): Promise<string | null>;
+  rolloutRestartServer(mcpServerId: string): Promise<void>;
 }
