@@ -560,8 +560,8 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
         throw new Error(`MCP server deployment ${mcpServerId} not found`);
       }
 
-      await McpHttpSessionModel.deleteByMcpServerId(mcpServerId);
       await k8sDeployment.rolloutRestartDeployment();
+      await McpHttpSessionModel.deleteByMcpServerId(mcpServerId);
 
       logger.info(
         `MCP server deployment ${mcpServerId} rollout restart triggered successfully`,

@@ -1014,7 +1014,7 @@ describe("McpServerRuntimeManager.rolloutRestartServer", () => {
     vi.resetModules();
   });
 
-  test("cleans up HTTP sessions before triggering deployment rollout restart", async () => {
+  test("cleans up HTTP sessions after triggering deployment rollout restart", async () => {
     const McpHttpSessionModel = (await import("@/models/mcp-http-session"))
       .default;
     const { McpServerRuntimeManager } = await import("./manager");
@@ -1035,6 +1035,30 @@ describe("McpServerRuntimeManager.rolloutRestartServer", () => {
       "server-1",
     );
     expect(mockRolloutRestartDeployment).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not clean up HTTP sessions when deployment rollout restart fails", async () => {
+    const McpHttpSessionModel = (await import("@/models/mcp-http-session"))
+      .default;
+    const { McpServerRuntimeManager } = await import("./manager");
+    const manager = new McpServerRuntimeManager();
+    const restartError = new Error("restart failed");
+    const mockDeployment = {
+      rolloutRestartDeployment: mockRolloutRestartDeployment,
+    };
+
+    mockRolloutRestartDeployment.mockRejectedValueOnce(restartError);
+    (
+      manager as unknown as {
+        mcpServerIdToDeploymentMap: Map<string, typeof mockDeployment>;
+      }
+    ).mcpServerIdToDeploymentMap.set("server-1", mockDeployment);
+
+    await expect(manager.rolloutRestartServer("server-1")).rejects.toThrow(
+      "restart failed",
+    );
+
+    expect(McpHttpSessionModel.deleteByMcpServerId).not.toHaveBeenCalled();
   });
 });
 

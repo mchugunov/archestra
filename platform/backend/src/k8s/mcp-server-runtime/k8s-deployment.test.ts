@@ -1,6 +1,11 @@
 import { PassThrough } from "node:stream";
 import type * as k8s from "@kubernetes/client-node";
-import type { Attach, Exec, Log } from "@kubernetes/client-node";
+import {
+  type Attach,
+  type Exec,
+  type Log,
+  PatchStrategy,
+} from "@kubernetes/client-node";
 import type { LocalConfigSchema } from "@shared";
 import { vi } from "vitest";
 import type { z } from "zod";
@@ -3701,21 +3706,33 @@ describe("K8sDeployment.rolloutRestartDeployment", () => {
 
     await k8sDeployment.rolloutRestartDeployment(restartedAt);
 
-    expect(mockPatchDeployment).toHaveBeenCalledWith({
-      name: "mcp-test-server",
-      namespace: "default",
-      body: {
-        spec: {
-          template: {
-            metadata: {
-              annotations: {
-                "kubectl.kubernetes.io/restartedAt": restartedAt.toISOString(),
+    expect(mockPatchDeployment).toHaveBeenCalledWith(
+      {
+        name: "mcp-test-server",
+        namespace: "default",
+        body: {
+          spec: {
+            template: {
+              metadata: {
+                annotations: {
+                  "kubectl.kubernetes.io/restartedAt":
+                    restartedAt.toISOString(),
+                },
               },
             },
           },
         },
       },
-    });
+      expect.objectContaining({ middlewareMergeStrategy: "append" }),
+    );
+
+    const patchOptions = mockPatchDeployment.mock.calls[0]?.[1];
+    const setHeaderParam = vi.fn();
+    await patchOptions.middleware[0].pre({ setHeaderParam }).toPromise();
+    expect(setHeaderParam).toHaveBeenCalledWith(
+      "Content-Type",
+      PatchStrategy.StrategicMergePatch,
+    );
   });
 });
 

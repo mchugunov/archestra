@@ -1,7 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { PassThrough } from "node:stream";
 import type * as k8s from "@kubernetes/client-node";
-import type { Attach, Exec } from "@kubernetes/client-node";
+import {
+  type Attach,
+  type Exec,
+  PatchStrategy,
+  setHeaderOptions,
+} from "@kubernetes/client-node";
 import {
   type ImagePullSecretConfig,
   type LocalConfigSchema,
@@ -40,6 +45,10 @@ const {
 } = config;
 
 const ROLLOUT_RESTART_ANNOTATION = "kubectl.kubernetes.io/restartedAt";
+const ROLLOUT_RESTART_PATCH_OPTIONS = setHeaderOptions(
+  "Content-Type",
+  PatchStrategy.StrategicMergePatch,
+);
 
 // How long streamLogs will keep an open WS waiting for the pod to become
 // Ready before giving up. 5 minutes covers a slow image pull on first install.
@@ -1840,21 +1849,24 @@ export default class K8sDeployment {
   ): Promise<void> {
     const restartedAtIso = restartedAt.toISOString();
 
-    await this.k8sAppsApi.patchNamespacedDeployment({
-      name: this.deploymentName,
-      namespace: this.namespace,
-      body: {
-        spec: {
-          template: {
-            metadata: {
-              annotations: {
-                [ROLLOUT_RESTART_ANNOTATION]: restartedAtIso,
+    await this.k8sAppsApi.patchNamespacedDeployment(
+      {
+        name: this.deploymentName,
+        namespace: this.namespace,
+        body: {
+          spec: {
+            template: {
+              metadata: {
+                annotations: {
+                  [ROLLOUT_RESTART_ANNOTATION]: restartedAtIso,
+                },
               },
             },
           },
-        },
-      } as unknown as k8s.V1Deployment,
-    });
+        } as unknown as k8s.V1Deployment,
+      },
+      ROLLOUT_RESTART_PATCH_OPTIONS,
+    );
 
     this.state = "pending";
     this.cachedPodName = null;
