@@ -162,6 +162,47 @@ describe("McpServerModel", () => {
         false,
       );
     });
+
+    test("can filter eligible local servers by MCP server ID", async ({
+      makeInternalMcpCatalog,
+      makeMcpServer,
+    }) => {
+      const firstCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/first-server:latest",
+        },
+      });
+      const secondCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/second-server:latest",
+        },
+      });
+      const firstServer = await makeMcpServer({
+        catalogId: firstCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: true,
+      });
+      await makeMcpServer({
+        catalogId: secondCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: true,
+      });
+
+      const results =
+        await McpServerModel.findLocalServersEligibleForImageUpdateCheck({
+          mcpServerId: firstServer.id,
+        });
+
+      expect(results.map(({ server }) => server.id)).toEqual([firstServer.id]);
+      expect(results[0].catalog).toMatchObject({
+        id: firstCatalog.id,
+        localConfig: {
+          dockerImage: "localhost:5001/first-server:latest",
+        },
+      });
+    });
   });
 
   describe("findAll", () => {

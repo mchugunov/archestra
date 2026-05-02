@@ -87,6 +87,65 @@ describe("handleCheckMcpImageUpdates", () => {
     expect(disabledState).toBeNull();
   });
 
+  test("processes a targeted follow-up payload without triggering another restart", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const targetCatalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: {
+        dockerImage: "registry.example.com/mcp/target:stable",
+      },
+    });
+    const otherCatalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: {
+        dockerImage: "registry.example.com/mcp/other:stable",
+      },
+    });
+    const targetServer = await makeMcpServer({
+      catalogId: targetCatalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    const otherServer = await makeMcpServer({
+      catalogId: otherCatalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const service = new McpImageUpdateCheckerService({
+      maxJitterMs: 0,
+      runtime,
+    });
+
+    await service.handleCheckMcpImageUpdates({
+      mcpServerId: targetServer.id,
+      skipAutoRestart: true,
+    });
+
+    const targetState = await McpServerImageUpdateStateModel.findByMcpServerId(
+      targetServer.id,
+    );
+    const otherState = await McpServerImageUpdateStateModel.findByMcpServerId(
+      otherServer.id,
+    );
+
+    expect(runtime.getRunningImageDigest).toHaveBeenCalledTimes(1);
+    expect(runtime.getRunningImageDigest).toHaveBeenCalledWith(targetServer.id);
+    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
+    expect(targetState).toMatchObject({
+      mcpServerId: targetServer.id,
+      status: "update_available",
+    });
+    expect(otherState).toBeNull();
+  });
+
   test("continues processing later servers when one image check fails", async ({
     makeInternalMcpCatalog,
     makeMcpServer,

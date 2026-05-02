@@ -8,6 +8,7 @@ import {
 import logger from "@/logging";
 import McpServerModel from "@/models/mcp-server";
 import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-state";
+import { taskQueueService } from "@/task-queue";
 import type {
   InternalMcpCatalog,
   McpServer,
@@ -21,7 +22,18 @@ type EligibleMcpImageUpdateServer = {
 
 type ProcessMcpServerImageUpdateCheckParams = {
   eligibleServer: EligibleMcpImageUpdateServer;
+  allowAutoRestart?: boolean;
   checkedAt?: Date;
+};
+
+type CheckMcpImageUpdatesPayload = {
+  mcpServerId?: string;
+  skipAutoRestart: boolean;
+};
+
+type ScheduleFollowUpCheckParams = {
+  mcpServerId: string;
+  scheduledFor: Date;
 };
 
 type McpImageUpdateCheckerServiceParams = {
@@ -30,6 +42,9 @@ type McpImageUpdateCheckerServiceParams = {
   concurrencyLimit?: number;
   maxJitterMs?: number;
   jitterDelayProvider?: (maxJitterMs: number) => number;
+  scheduleFollowUpCheck?: (
+    params: ScheduleFollowUpCheckParams,
+  ) => Promise<void>;
   sleep?: (ms: number) => Promise<void>;
 };
 
@@ -39,6 +54,9 @@ export class McpImageUpdateCheckerService {
   private readonly jitterDelayProvider: (maxJitterMs: number) => number;
   private readonly maxJitterMs: number;
   private readonly runtime: ImageUpdateRuntime;
+  private readonly scheduleFollowUpCheck: (
+    params: ScheduleFollowUpCheckParams,
+  ) => Promise<void>;
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(params: McpImageUpdateCheckerServiceParams = {}) {
@@ -48,20 +66,35 @@ export class McpImageUpdateCheckerService {
     this.jitterDelayProvider = params.jitterDelayProvider ?? getJitterMs;
     this.maxJitterMs = normalizeMaxJitterMs(params.maxJitterMs);
     this.runtime = params.runtime ?? McpServerRuntimeManager;
+    this.scheduleFollowUpCheck =
+      params.scheduleFollowUpCheck ?? scheduleImageUpdateFollowUpCheck;
     this.sleep = params.sleep ?? sleep;
   }
 
   async handleCheckMcpImageUpdates(
-    _payload: Record<string, unknown>,
+    payload: Record<string, unknown>,
   ): Promise<void> {
+    const parsedPayload = parseCheckMcpImageUpdatesPayload(payload);
+    if (!parsedPayload) {
+      logger.warn(
+        { payload },
+        "Skipping MCP image update check task with invalid payload",
+      );
+      return;
+    }
+
     const eligibleServers =
-      await McpServerModel.findLocalServersEligibleForImageUpdateCheck();
+      await McpServerModel.findLocalServersEligibleForImageUpdateCheck({
+        mcpServerId: parsedPayload.mcpServerId,
+      });
 
     logger.info(
       {
         eligibleServerCount: eligibleServers.length,
         concurrencyLimit: this.concurrencyLimit,
         maxJitterMs: this.maxJitterMs,
+        mcpServerId: parsedPayload.mcpServerId,
+        skipAutoRestart: parsedPayload.skipAutoRestart,
       },
       "Loaded MCP servers eligible for image update checks",
     );
@@ -70,7 +103,11 @@ export class McpImageUpdateCheckerService {
       items: eligibleServers,
       concurrencyLimit: this.concurrencyLimit,
       processItem: (eligibleServer) =>
-        this.processEligibleServer(eligibleServer),
+        this.processEligibleServer({
+          eligibleServer,
+          allowAutoRestart: !parsedPayload.skipAutoRestart,
+          applyJitter: !parsedPayload.mcpServerId,
+        }),
     });
   }
 
@@ -78,6 +115,7 @@ export class McpImageUpdateCheckerService {
     params: ProcessMcpServerImageUpdateCheckParams,
   ): Promise<void> {
     const {
+      allowAutoRestart = true,
       checkedAt = new Date(),
       eligibleServer: { server, catalog },
     } = params;
@@ -135,6 +173,7 @@ export class McpImageUpdateCheckerService {
       if (runningImageDigest !== availableImageDigest) {
         await this.persistChangedImageState({
           server,
+          allowAutoRestart,
           checkedAt,
           runningImageDigest,
           availableImageDigest,
@@ -159,15 +198,21 @@ export class McpImageUpdateCheckerService {
 
   // ===== Private methods =====
 
-  private async processEligibleServer(
-    eligibleServer: EligibleMcpImageUpdateServer,
-  ): Promise<void> {
+  private async processEligibleServer(params: {
+    eligibleServer: EligibleMcpImageUpdateServer;
+    allowAutoRestart: boolean;
+    applyJitter: boolean;
+  }): Promise<void> {
+    const { allowAutoRestart, applyJitter, eligibleServer } = params;
     try {
-      if (this.maxJitterMs > 0) {
+      if (applyJitter && this.maxJitterMs > 0) {
         await this.sleep(this.jitterDelayProvider(this.maxJitterMs));
       }
 
-      await this.processMcpServerImageUpdateCheck({ eligibleServer });
+      await this.processMcpServerImageUpdateCheck({
+        allowAutoRestart,
+        eligibleServer,
+      });
     } catch (error) {
       logger.warn(
         createImageUpdateLogContext({
@@ -190,11 +235,15 @@ export class McpImageUpdateCheckerService {
 
   private async persistChangedImageState(params: {
     server: McpServer;
+    allowAutoRestart: boolean;
     checkedAt: Date;
     runningImageDigest: string;
     availableImageDigest: string;
   }): Promise<void> {
-    if (!params.server.imageUpdateAutoRestartEnabled) {
+    if (
+      !params.allowAutoRestart ||
+      !params.server.imageUpdateAutoRestartEnabled
+    ) {
       await this.persistImageUpdateState({
         mcpServerId: params.server.id,
         checkedAt: params.checkedAt,
@@ -214,6 +263,24 @@ export class McpImageUpdateCheckerService {
       status: "restart_triggered",
       lastRestartedAt: params.checkedAt,
     });
+    await this.scheduleDelayedFollowUpCheck(params.server.id);
+  }
+
+  private async scheduleDelayedFollowUpCheck(
+    mcpServerId: string,
+  ): Promise<void> {
+    const scheduledFor = new Date(
+      Date.now() + IMAGE_UPDATE_FOLLOW_UP_CHECK_DELAY_MS,
+    );
+
+    try {
+      await this.scheduleFollowUpCheck({ mcpServerId, scheduledFor });
+    } catch (error) {
+      logger.warn(
+        { err: error, mcpServerId, scheduledFor },
+        "Failed to schedule MCP server image update follow-up check",
+      );
+    }
   }
 
   private async persistImageUpdateState(params: {
@@ -246,6 +313,7 @@ export class McpImageUpdateCheckerService {
 const DEFAULT_AVAILABLE_DIGEST_TIMEOUT_MS = TimeInMs.Second * 60;
 const DEFAULT_IMAGE_UPDATE_CHECK_CONCURRENCY_LIMIT = 3;
 const DEFAULT_IMAGE_UPDATE_CHECK_MAX_JITTER_MS = 2_000;
+const IMAGE_UPDATE_FOLLOW_UP_CHECK_DELAY_MS = TimeInMs.Second * 10;
 const MAX_IMAGE_UPDATE_CHECK_CONCURRENCY_LIMIT = 5;
 
 export const mcpImageUpdateCheckerService = new McpImageUpdateCheckerService();
@@ -289,6 +357,38 @@ function normalizeMaxJitterMs(input: number | undefined): number {
   }
 
   return Math.max(Math.floor(input), 0);
+}
+
+function parseCheckMcpImageUpdatesPayload(
+  payload: Record<string, unknown>,
+): CheckMcpImageUpdatesPayload | null {
+  if (
+    "mcpServerId" in payload &&
+    payload.mcpServerId !== undefined &&
+    typeof payload.mcpServerId !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    mcpServerId:
+      typeof payload.mcpServerId === "string" ? payload.mcpServerId : undefined,
+    skipAutoRestart: payload.skipAutoRestart === true,
+  };
+}
+
+async function scheduleImageUpdateFollowUpCheck(
+  params: ScheduleFollowUpCheckParams,
+): Promise<void> {
+  await taskQueueService.enqueue({
+    taskType: "check_mcp_image_updates",
+    payload: {
+      mcpServerId: params.mcpServerId,
+      skipAutoRestart: true,
+    },
+    maxAttempts: 1,
+    scheduledFor: params.scheduledFor,
+  });
 }
 
 function getJitterMs(maxJitterMs: number): number {

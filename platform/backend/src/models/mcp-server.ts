@@ -399,7 +399,9 @@ class McpServerModel {
       .where(inArray(schema.mcpServersTable.id, ids));
   }
 
-  static async findLocalServersEligibleForImageUpdateCheck(): Promise<
+  static async findLocalServersEligibleForImageUpdateCheck(
+    params: { mcpServerId?: string } = {},
+  ): Promise<
     Array<{
       server: typeof schema.mcpServersTable.$inferSelect;
       catalog: Pick<
@@ -436,6 +438,9 @@ class McpServerModel {
           eq(schema.mcpServersTable.serverType, "local"),
           eq(schema.internalMcpCatalogTable.serverType, "local"),
           eq(schema.mcpServersTable.imageUpdateCheckEnabled, true),
+          ...(params.mcpServerId
+            ? [eq(schema.mcpServersTable.id, params.mcpServerId)]
+            : []),
         ),
       );
   }

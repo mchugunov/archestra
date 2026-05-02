@@ -154,8 +154,17 @@ describe("processMcpServerImageUpdateCheck", () => {
       runningDigest: "sha256:old",
       availableDigest: "sha256:new",
     });
+    const scheduleFollowUpCheck = vi
+      .fn<
+        (params: { mcpServerId: string; scheduledFor: Date }) => Promise<void>
+      >()
+      .mockResolvedValue(undefined);
 
-    const service = new McpImageUpdateCheckerService({ runtime });
+    const service = new McpImageUpdateCheckerService({
+      runtime,
+      scheduleFollowUpCheck,
+    });
+    const beforeCheck = Date.now();
 
     await service.processMcpServerImageUpdateCheck({
       eligibleServer: { server, catalog },
@@ -167,6 +176,14 @@ describe("processMcpServerImageUpdateCheck", () => {
     );
 
     expect(runtime.rolloutRestartServer).toHaveBeenCalledWith(server.id);
+    expect(scheduleFollowUpCheck).toHaveBeenCalledWith({
+      mcpServerId: server.id,
+      scheduledFor: expect.any(Date),
+    });
+    const scheduledFor = scheduleFollowUpCheck.mock.calls[0]?.[0].scheduledFor;
+    expect(scheduledFor?.getTime()).toBeGreaterThanOrEqual(
+      beforeCheck + 10_000,
+    );
     expect(state).toMatchObject({
       mcpServerId: server.id,
       lastCheckedAt: CHECKED_AT,
@@ -174,6 +191,56 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableImageDigest: "sha256:new",
       status: "restart_triggered",
       lastRestartedAt: CHECKED_AT,
+    });
+  });
+
+  test("persists update_available without restart when auto-restart is skipped by task payload", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const scheduleFollowUpCheck = vi
+      .fn<
+        (params: { mcpServerId: string; scheduledFor: Date }) => Promise<void>
+      >()
+      .mockResolvedValue(undefined);
+
+    const service = new McpImageUpdateCheckerService({
+      runtime,
+      scheduleFollowUpCheck,
+    });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      allowAutoRestart: false,
+      checkedAt: CHECKED_AT,
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
+    expect(scheduleFollowUpCheck).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: CHECKED_AT,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      status: "update_available",
     });
   });
 
