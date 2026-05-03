@@ -4,21 +4,21 @@ import type { InternalMcpCatalog } from "@/types";
 
 export type ResolvedImagePullSecretName = { name: string };
 
-export const collectImagePullSecretNames = (options: {
-  imagePullSecrets: ImagePullSecretConfig[] | undefined;
-  generatedRegcredNames: string[];
-}): ResolvedImagePullSecretName[] => {
+export const collectImagePullSecretNames = (
+  imagePullSecrets: ImagePullSecretConfig[] | undefined,
+  generatedRegcredNames: string[],
+): ResolvedImagePullSecretName[] => {
   const names: ResolvedImagePullSecretName[] = [];
 
-  if (options.imagePullSecrets) {
-    for (const entry of options.imagePullSecrets) {
+  if (imagePullSecrets) {
+    for (const entry of imagePullSecrets) {
       if (entry.source === "existing") {
         names.push({ name: entry.name });
       }
     }
   }
 
-  for (const name of options.generatedRegcredNames) {
+  for (const name of generatedRegcredNames) {
     names.push({ name });
   }
 
@@ -29,24 +29,21 @@ export const collectImagePullSecretNames = (options: {
 // and resolve all imagePullSecrets names for the pod spec.
 // Regcred passwords are stored in the catalog's localConfigSecretId, not
 // the per-user mcpServer.secretId, so fetch them separately.
-export const resolveMcpImagePullSecretNames = async (options: {
-  catalogItem: InternalMcpCatalog | null | undefined;
+export const resolveMcpImagePullSecretNames = async (
+  catalogItem: InternalMcpCatalog | null | undefined,
   createDockerRegistrySecrets: (
     secretData: Record<string, string>,
     imagePullSecrets?: ImagePullSecretConfig[],
-  ) => Promise<string[]>;
-}): Promise<ResolvedImagePullSecretName[]> => {
-  const imagePullSecrets = options.catalogItem?.localConfig?.imagePullSecrets;
-  const regcredSecretData = await getRegcredSecretData(options.catalogItem);
-  const generatedRegcredNames = await options.createDockerRegistrySecrets(
+  ) => Promise<string[]>,
+): Promise<ResolvedImagePullSecretName[]> => {
+  const imagePullSecrets = catalogItem?.localConfig?.imagePullSecrets;
+  const regcredSecretData = await getRegcredSecretData(catalogItem);
+  const generatedRegcredNames = await createDockerRegistrySecrets(
     regcredSecretData,
     imagePullSecrets,
   );
 
-  return collectImagePullSecretNames({
-    imagePullSecrets,
-    generatedRegcredNames,
-  });
+  return collectImagePullSecretNames(imagePullSecrets, generatedRegcredNames);
 };
 
 async function getRegcredSecretData(

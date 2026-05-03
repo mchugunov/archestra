@@ -276,7 +276,7 @@ describe("McpCatalogForm enterprise gating", () => {
           } as never
         }
         catalogButton={<div>Top catalog action</div>}
-        dockerCardContent={<div>Docker image update settings</div>}
+        imageUpdateContent={<div>Docker image update settings</div>}
       />,
     );
 

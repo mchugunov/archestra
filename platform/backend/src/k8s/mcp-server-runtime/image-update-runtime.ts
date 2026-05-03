@@ -1,11 +1,9 @@
-export type ResolveAvailableImageDigestRuntimeOptions = {
-  timeoutMs?: number;
-};
-
 export type ResolveAvailableImageDigestRuntimeParams = {
   mcpServerId: string;
   image: string;
-  options?: ResolveAvailableImageDigestRuntimeOptions;
+  options?: {
+    timeoutMs?: number;
+  };
 };
 
 export interface ImageUpdateRuntime {

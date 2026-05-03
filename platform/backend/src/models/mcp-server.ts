@@ -400,7 +400,7 @@ class McpServerModel {
   }
 
   static async findLocalServersEligibleForImageUpdateCheck(
-    params: { mcpServerId?: string } = {},
+    mcpServerId?: string,
   ): Promise<
     Array<{
       server: typeof schema.mcpServersTable.$inferSelect;
@@ -422,9 +422,7 @@ class McpServerModel {
           eq(schema.mcpServersTable.serverType, "local"),
           eq(schema.internalMcpCatalogTable.serverType, "local"),
           eq(schema.mcpServersTable.imageUpdateCheckEnabled, true),
-          ...(params.mcpServerId
-            ? [eq(schema.mcpServersTable.id, params.mcpServerId)]
-            : []),
+          ...(mcpServerId ? [eq(schema.mcpServersTable.id, mcpServerId)] : []),
         ),
       );
   }

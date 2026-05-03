@@ -41,8 +41,8 @@ interface EditCatalogContentProps {
   onDirtyChange?: (isDirty: boolean) => void;
   /** Ref to imperatively trigger form submission */
   submitRef?: React.MutableRefObject<(() => Promise<void>) | null>;
-  /** Optional content rendered inside the Docker settings card. */
-  dockerCardContent?: React.ReactNode;
+  /** Optional content rendered inside the Docker settings. */
+  imageUpdateContent?: React.ReactNode;
 }
 
 export function EditCatalogContent({
@@ -51,7 +51,7 @@ export function EditCatalogContent({
   keepOpenOnSave = false,
   onDirtyChange,
   submitRef,
-  dockerCardContent,
+  imageUpdateContent,
 }: EditCatalogContentProps) {
   const [pendingValues, setPendingValues] =
     useState<McpCatalogFormValues | null>(null);
@@ -96,7 +96,7 @@ export function EditCatalogContent({
         nameDisabled
         onDirtyChange={onDirtyChange}
         submitRef={submitRef}
-        dockerCardContent={dockerCardContent}
+        imageUpdateContent={imageUpdateContent}
         footer={({ isDirty, onReset }) => {
           if (keepOpenOnSave && !isDirty) return null;
           const Footer = keepOpenOnSave ? DialogStickyFooter : DialogFooter;

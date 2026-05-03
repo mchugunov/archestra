@@ -1155,11 +1155,8 @@ describe("parseMcpImageUpdateCheckIntervalSeconds", () => {
     expect(parseMcpImageUpdateCheckIntervalSeconds("  600  ")).toBe(600);
   });
 
-  test("should return default and warn for invalid value", () => {
+  test("should return default for invalid value", () => {
     expect(parseMcpImageUpdateCheckIntervalSeconds("abc")).toBe(900);
-    expect(logger.warn).toHaveBeenCalledWith(
-      'Invalid ARCHESTRA_MCP_IMAGE_UPDATE_CHECK_INTERVAL_SECONDS value "abc", using default 900',
-    );
   });
 
   test("should clamp below-minimum value to 300 and warn", () => {

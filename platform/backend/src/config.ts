@@ -478,18 +478,7 @@ export const parseMcpImageUpdateCheckIntervalSeconds = (
   const MIN_INTERVAL_SECONDS = 300;
   const trimmed = envValue?.trim();
 
-  if (!trimmed) {
-    return DEFAULT_INTERVAL_SECONDS;
-  }
-
-  if (!/^\d+$/.test(trimmed)) {
-    logger.warn(
-      `Invalid ARCHESTRA_MCP_IMAGE_UPDATE_CHECK_INTERVAL_SECONDS value "${trimmed}", using default ${DEFAULT_INTERVAL_SECONDS}`,
-    );
-    return DEFAULT_INTERVAL_SECONDS;
-  }
-
-  const parsed = Number.parseInt(trimmed, 10);
+  const parsed = parsePositiveInt(trimmed, DEFAULT_INTERVAL_SECONDS);
   if (parsed < MIN_INTERVAL_SECONDS) {
     logger.warn(
       `ARCHESTRA_MCP_IMAGE_UPDATE_CHECK_INTERVAL_SECONDS value "${trimmed}" is below minimum (${MIN_INTERVAL_SECONDS}s), clamping to ${MIN_INTERVAL_SECONDS}`,

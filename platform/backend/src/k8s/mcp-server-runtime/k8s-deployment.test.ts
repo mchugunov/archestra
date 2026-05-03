@@ -8,7 +8,6 @@ import config from "@/config";
 import logger from "@/logging";
 import { describe, expect, test } from "@/test";
 import type { McpServer } from "@/types";
-import { collectImagePullSecretNames } from "./image-pull-secrets";
 import K8sDeployment, {
   fetchPlatformPodNodeSelector,
   fetchPlatformPodTolerations,
@@ -4648,7 +4647,6 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
         image: "ghcr.io/example/server:latest",
         resolvedImagePullSecretNames: [{ name: "registry-secret" }],
         timeoutMs: 20,
-        pollIntervalMs: 1,
       }),
     ).resolves.toBe("sha256:abc123");
 
@@ -5180,71 +5178,6 @@ describe("K8sDeployment.createDockerRegistrySecrets", () => {
     expect(mockCreate).toHaveBeenCalledOnce();
     const body = mockCreate.mock.calls[0][0].body;
     expect(body.metadata.labels["team-id"]).toBeUndefined();
-  });
-});
-
-describe("collectImagePullSecretNames", () => {
-  test("returns empty array when no secrets provided", () => {
-    expect(
-      collectImagePullSecretNames({
-        imagePullSecrets: undefined,
-        generatedRegcredNames: [],
-      }),
-    ).toEqual([]);
-  });
-
-  test("collects existing secret names", () => {
-    const result = collectImagePullSecretNames({
-      imagePullSecrets: [
-        { source: "existing", name: "secret-a" },
-        { source: "existing", name: "secret-b" },
-      ],
-      generatedRegcredNames: [],
-    });
-    expect(result).toEqual([{ name: "secret-a" }, { name: "secret-b" }]);
-  });
-
-  test("skips credentials entries (they come from generatedRegcredNames)", () => {
-    const result = collectImagePullSecretNames({
-      imagePullSecrets: [
-        { source: "existing", name: "existing-one" },
-        {
-          source: "credentials",
-          server: "quay.io",
-          username: "user",
-        },
-      ],
-      generatedRegcredNames: [],
-    });
-    expect(result).toEqual([{ name: "existing-one" }]);
-  });
-
-  test("merges existing names with generated regcred names", () => {
-    const result = collectImagePullSecretNames({
-      imagePullSecrets: [{ source: "existing", name: "pre-existing" }],
-      generatedRegcredNames: ["mcp-server-x-regcred-quay.io-user"],
-    });
-    expect(result).toEqual([
-      { name: "pre-existing" },
-      { name: "mcp-server-x-regcred-quay.io-user" },
-    ]);
-  });
-
-  test("returns only generated names when no existing entries", () => {
-    const result = collectImagePullSecretNames({
-      imagePullSecrets: [
-        {
-          source: "credentials",
-          server: "ghcr.io",
-          username: "bot",
-        },
-      ],
-      generatedRegcredNames: ["generated-secret-1", "generated-secret-2"],
-    });
-    expect(result).toEqual([
-      { name: "generated-secret-1" },
-      { name: "generated-secret-2" },
-    ]);
   });
 });
 

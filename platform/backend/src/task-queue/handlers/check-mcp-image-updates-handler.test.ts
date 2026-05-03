@@ -386,18 +386,16 @@ describe("handleCheckMcpImageUpdates", () => {
       runningDigest: "sha256:same",
       availableDigest: "sha256:same",
     });
-    const sleep = vi.fn<(_ms: number) => Promise<void>>();
-    sleep.mockResolvedValue(undefined);
-    const service = new McpImageUpdateCheckerService({
-      jitterDelayProvider: () => 23,
+    const service = new JitterTestMcpImageUpdateCheckerService({
       maxJitterMs: 37,
       runtime,
-      sleep,
     });
+    service.getJitterMsMock.mockReturnValue(23);
 
     await service.handleCheckMcpImageUpdates({});
 
-    expect(sleep).toHaveBeenCalledWith(23);
+    expect(service.getJitterMsMock).toHaveBeenCalledWith(37);
+    expect(service.sleepMock).toHaveBeenCalledWith(23);
     expect(runtime.getRunningImageDigest).toHaveBeenCalledTimes(1);
   });
 });
@@ -426,6 +424,21 @@ function createRuntime(
     options.availableDigest ?? "sha256:available",
   );
   return runtime;
+}
+
+class JitterTestMcpImageUpdateCheckerService extends McpImageUpdateCheckerService {
+  readonly getJitterMsMock = vi.fn<(maxJitterMs: number) => number>();
+  readonly sleepMock = vi
+    .fn<(ms: number) => Promise<void>>()
+    .mockResolvedValue(undefined);
+
+  protected override getJitterMs(maxJitterMs: number): number {
+    return this.getJitterMsMock(maxJitterMs);
+  }
+
+  protected override sleep(ms: number): Promise<void> {
+    return this.sleepMock(ms);
+  }
 }
 
 type DeferredValue<T> = {

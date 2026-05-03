@@ -11,7 +11,7 @@ import {
   McpServerModel,
 } from "@/models";
 import { secretManager } from "@/secrets-manager";
-import type { InternalMcpCatalog, McpServer } from "@/types";
+import type { McpServer } from "@/types";
 import { resolveMcpImagePullSecretNames } from "./image-pull-secrets";
 import type {
   ImageUpdateRuntime,
@@ -307,8 +307,14 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
         );
       }
 
-      const resolvedImagePullSecretNames =
-        await this.resolveImagePullSecretNames(k8sDeployment, catalogItem);
+      const resolvedImagePullSecretNames = await resolveMcpImagePullSecretNames(
+        catalogItem,
+        (secretData, imagePullSecrets) =>
+          k8sDeployment.createDockerRegistrySecrets(
+            secretData,
+            imagePullSecrets,
+          ),
+      );
 
       await k8sDeployment.startOrCreateDeployment(resolvedImagePullSecretNames);
       logger.info(`Successfully started MCP server deployment ${id} (${name})`);
@@ -709,9 +715,10 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
     const catalogItem = await InternalMcpCatalogModel.findById(
       mcpServer.catalogId,
     );
-    const resolvedImagePullSecretNames = await this.resolveImagePullSecretNames(
-      k8sDeployment,
+    const resolvedImagePullSecretNames = await resolveMcpImagePullSecretNames(
       catalogItem,
+      (secretData, imagePullSecrets) =>
+        k8sDeployment.createDockerRegistrySecrets(secretData, imagePullSecrets),
     );
 
     return k8sDeployment.resolveAvailableImageDigest({
@@ -939,17 +946,6 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
         "Failed to list secrets for team-id backfill",
       );
     }
-  }
-
-  private async resolveImagePullSecretNames(
-    k8sDeployment: K8sDeployment,
-    catalogItem: InternalMcpCatalog | null | undefined,
-  ) {
-    return resolveMcpImagePullSecretNames({
-      catalogItem,
-      createDockerRegistrySecrets: (secretData, imagePullSecrets) =>
-        k8sDeployment.createDockerRegistrySecrets(secretData, imagePullSecrets),
-    });
   }
 
   /**

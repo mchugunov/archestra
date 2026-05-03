@@ -126,7 +126,7 @@ interface McpCatalogFormProps {
     | ((opts: { isDirty: boolean; onReset: () => void }) => React.ReactNode);
   nameDisabled?: boolean;
   catalogButton?: React.ReactNode;
-  dockerCardContent?: React.ReactNode;
+  imageUpdateContent?: React.ReactNode;
   formValues?: McpCatalogFormValues;
   /** Called when form dirty state changes */
   onDirtyChange?: (isDirty: boolean) => void;
@@ -142,7 +142,7 @@ export function McpCatalogForm({
   nameDisabled,
   footer,
   catalogButton,
-  dockerCardContent,
+  imageUpdateContent,
   formValues,
   onDirtyChange,
   submitRef,
@@ -1339,7 +1339,7 @@ export function McpCatalogForm({
                   })}
                 </div>
 
-                {dockerCardContent}
+                {imageUpdateContent}
               </div>
             )}
 

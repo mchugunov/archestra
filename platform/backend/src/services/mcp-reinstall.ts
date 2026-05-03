@@ -4,11 +4,6 @@ import logger from "@/logging";
 import { McpServerModel, ToolModel } from "@/models";
 import type { InternalMcpCatalog, LocalConfig, McpServer } from "@/types";
 
-type InternalMcpCatalogRow = typeof schema.internalMcpCatalogTable.$inferSelect;
-type ImageUpdateReinstallCatalogItem =
-  | InternalMcpCatalog
-  | InternalMcpCatalogRow;
-
 /**
  * Checks if a catalog edit requires new user input for reinstallation.
  *
@@ -277,20 +272,6 @@ export async function autoReinstallLocalMcpServerAfterImageUpdate(params: {
   }
 }
 
-function toInternalMcpCatalog(
-  catalogItem: ImageUpdateReinstallCatalogItem,
-): InternalMcpCatalog {
-  if ("labels" in catalogItem && "teams" in catalogItem) {
-    return catalogItem;
-  }
-
-  return {
-    ...catalogItem,
-    labels: [],
-    teams: [],
-  };
-}
-
 // ===== Internal helpers =====
 
 type PromptedEnvVarInfo = { required: boolean; type: string };
@@ -304,6 +285,10 @@ type ComparableLocalConfig = Pick<
   | "httpPath"
   | "serviceAccount"
 >;
+type InternalMcpCatalogRow = typeof schema.internalMcpCatalogTable.$inferSelect;
+type ImageUpdateReinstallCatalogItem =
+  | InternalMcpCatalog
+  | InternalMcpCatalogRow;
 
 /**
  * Extract prompted env vars from a catalog item as a map of key -> { required, type }
@@ -406,4 +391,18 @@ function requiredUserConfigChanged(
   }
 
   return false;
+}
+
+function toInternalMcpCatalog(
+  catalogItem: ImageUpdateReinstallCatalogItem,
+): InternalMcpCatalog {
+  if ("labels" in catalogItem && "teams" in catalogItem) {
+    return catalogItem;
+  }
+
+  return {
+    ...catalogItem,
+    labels: [],
+    teams: [],
+  };
 }

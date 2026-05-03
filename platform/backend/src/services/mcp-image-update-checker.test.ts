@@ -4,10 +4,24 @@ import type {
   ResolveAvailableImageDigestRuntimeParams,
 } from "@/k8s/mcp-server-runtime";
 import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-state";
-import { describe, expect, test } from "@/test";
+import { autoReinstallLocalMcpServerAfterImageUpdate } from "@/services/mcp-reinstall";
+import { beforeEach, describe, expect, test } from "@/test";
 import { McpImageUpdateCheckerService } from "./mcp-image-update-checker";
 
 const CHECKED_AT = new Date("2026-01-01T00:10:00.000Z");
+
+vi.mock("@/services/mcp-reinstall", () => ({
+  autoReinstallLocalMcpServerAfterImageUpdate: vi.fn(),
+}));
+
+const autoReinstallAfterImageUpdateMock = vi.mocked(
+  autoReinstallLocalMcpServerAfterImageUpdate,
+);
+
+beforeEach(() => {
+  autoReinstallAfterImageUpdateMock.mockReset();
+  autoReinstallAfterImageUpdateMock.mockResolvedValue(undefined);
+});
 
 describe("processMcpServerImageUpdateCheck", () => {
   test("persists up_to_date for digest-pinned images without probing runtime", async ({
@@ -151,17 +165,8 @@ describe("processMcpServerImageUpdateCheck", () => {
       runningDigest: "sha256:old",
       availableDigest: "sha256:new",
     });
-    const scheduleFollowUpCheck = vi
-      .fn<
-        (params: { mcpServerId: string; scheduledFor: Date }) => Promise<void>
-      >()
-      .mockResolvedValue(undefined);
-    const reinstallAfterImageUpdate = vi.fn(async (_params: unknown) => {});
-
-    const service = new McpImageUpdateCheckerService({
+    const service = new TestMcpImageUpdateCheckerService({
       runtime,
-      scheduleFollowUpCheck,
-      reinstallAfterImageUpdate,
     });
     const beforeCheck = Date.now();
 
@@ -174,17 +179,18 @@ describe("processMcpServerImageUpdateCheck", () => {
       server.id,
     );
 
-    expect(reinstallAfterImageUpdate).toHaveBeenCalledWith({
+    expect(autoReinstallAfterImageUpdateMock).toHaveBeenCalledWith({
       server,
       catalogItem: catalog,
       runningImageDigest: "sha256:old",
       availableImageDigest: "sha256:new",
     });
-    expect(scheduleFollowUpCheck).toHaveBeenCalledWith({
+    expect(service.scheduleFollowUpCheckMock).toHaveBeenCalledWith({
       mcpServerId: server.id,
       scheduledFor: expect.any(Date),
     });
-    const scheduledFor = scheduleFollowUpCheck.mock.calls[0]?.[0].scheduledFor;
+    const scheduledFor =
+      service.scheduleFollowUpCheckMock.mock.calls[0]?.[0].scheduledFor;
     expect(scheduledFor?.getTime()).toBeGreaterThanOrEqual(
       beforeCheck + 10_000,
     );
@@ -216,19 +222,12 @@ describe("processMcpServerImageUpdateCheck", () => {
       runningDigest: "sha256:old",
       availableDigest: "sha256:new",
     });
-    const scheduleFollowUpCheck = vi
-      .fn<
-        (params: { mcpServerId: string; scheduledFor: Date }) => Promise<void>
-      >()
-      .mockResolvedValue(undefined);
-    const reinstallAfterImageUpdate = vi.fn(async (_params: unknown) => {
-      throw new Error("reinstall failed");
-    });
+    autoReinstallAfterImageUpdateMock.mockRejectedValueOnce(
+      new Error("reinstall failed"),
+    );
 
-    const service = new McpImageUpdateCheckerService({
+    const service = new TestMcpImageUpdateCheckerService({
       runtime,
-      scheduleFollowUpCheck,
-      reinstallAfterImageUpdate,
     });
 
     await service.processMcpServerImageUpdateCheck({
@@ -240,13 +239,13 @@ describe("processMcpServerImageUpdateCheck", () => {
       server.id,
     );
 
-    expect(reinstallAfterImageUpdate).toHaveBeenCalledWith({
+    expect(autoReinstallAfterImageUpdateMock).toHaveBeenCalledWith({
       server,
       catalogItem: catalog,
       runningImageDigest: "sha256:old",
       availableImageDigest: "sha256:new",
     });
-    expect(scheduleFollowUpCheck).not.toHaveBeenCalled();
+    expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
     expect(state).toBeNull();
   });
 
@@ -268,15 +267,8 @@ describe("processMcpServerImageUpdateCheck", () => {
       runningDigest: "sha256:old",
       availableDigest: "sha256:new",
     });
-    const scheduleFollowUpCheck = vi
-      .fn<
-        (params: { mcpServerId: string; scheduledFor: Date }) => Promise<void>
-      >()
-      .mockResolvedValue(undefined);
-
-    const service = new McpImageUpdateCheckerService({
+    const service = new TestMcpImageUpdateCheckerService({
       runtime,
-      scheduleFollowUpCheck,
     });
 
     await service.processMcpServerImageUpdateCheck({
@@ -289,7 +281,7 @@ describe("processMcpServerImageUpdateCheck", () => {
       server.id,
     );
 
-    expect(scheduleFollowUpCheck).not.toHaveBeenCalled();
+    expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
     expect(state).toMatchObject({
       mcpServerId: server.id,
       lastCheckedAt: CHECKED_AT,
@@ -461,4 +453,19 @@ function createRuntime(
     runtime.resolveAvailableImageDigest.mockResolvedValue(availableDigest);
   }
   return runtime;
+}
+
+class TestMcpImageUpdateCheckerService extends McpImageUpdateCheckerService {
+  readonly scheduleFollowUpCheckMock = vi
+    .fn<
+      (params: { mcpServerId: string; scheduledFor: Date }) => Promise<void>
+    >()
+    .mockResolvedValue(undefined);
+
+  protected override async scheduleImageUpdateFollowUpCheck(
+    mcpServerId: string,
+    scheduledFor: Date,
+  ): Promise<void> {
+    await this.scheduleFollowUpCheckMock({ mcpServerId, scheduledFor });
+  }
 }

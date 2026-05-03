@@ -230,9 +230,6 @@ interface ImageDigestProbePodSpecOptions {
 interface ResolveAvailableImageDigestOptions {
   image: string;
   resolvedImagePullSecretNames?: ResolvedImagePullSecretName[];
-  nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null;
-  tolerations?: k8s.V1Toleration[] | null;
-  serviceAccountName?: string | null;
   timeoutMs?: number;
   pollIntervalMs?: number;
 }
@@ -1797,14 +1794,13 @@ export default class K8sDeployment {
       K8sDeployment.IMAGE_DIGEST_PROBE_POLL_INTERVAL_MS;
     const podName = this.constructImageDigestProbePodName(options.image);
     const catalogItem = await this.getCatalogItem();
-    const serviceAccountName =
-      options.serviceAccountName ?? catalogItem?.localConfig?.serviceAccount;
+    const serviceAccountName = catalogItem?.localConfig?.serviceAccount;
     const resolvedImagePullSecretNames =
       options.resolvedImagePullSecretNames ??
-      collectImagePullSecretNames({
-        imagePullSecrets: catalogItem?.localConfig?.imagePullSecrets,
-        generatedRegcredNames: [],
-      });
+      collectImagePullSecretNames(
+        catalogItem?.localConfig?.imagePullSecrets,
+        [],
+      );
 
     await this.k8sApi.createNamespacedPod({
       namespace: this.namespace,
@@ -1814,8 +1810,8 @@ export default class K8sDeployment {
         namespace: this.namespace,
         mcpServer: this.mcpServer,
         imagePullSecrets: resolvedImagePullSecretNames,
-        nodeSelector: options.nodeSelector ?? getCachedPlatformNodeSelector(),
-        tolerations: options.tolerations ?? getCachedPlatformTolerations(),
+        nodeSelector: getCachedPlatformNodeSelector(),
+        tolerations: getCachedPlatformTolerations(),
         serviceAccountName,
         activeDeadlineSeconds: Math.ceil(timeoutMs / TimeInMs.Second) + 5,
       }),

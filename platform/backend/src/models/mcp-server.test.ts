@@ -191,9 +191,9 @@ describe("McpServerModel", () => {
       });
 
       const results =
-        await McpServerModel.findLocalServersEligibleForImageUpdateCheck({
-          mcpServerId: firstServer.id,
-        });
+        await McpServerModel.findLocalServersEligibleForImageUpdateCheck(
+          firstServer.id,
+        );
 
       expect(results.map(({ server }) => server.id)).toEqual([firstServer.id]);
       expect(results[0].catalog).toMatchObject({
