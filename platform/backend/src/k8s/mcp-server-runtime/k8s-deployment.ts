@@ -28,10 +28,7 @@ import {
   type ImageDigestProbe,
   K8sImageDigestProbe,
 } from "./image-digest-probe";
-import {
-  collectImagePullSecretNames,
-  type ResolvedImagePullSecretName,
-} from "./image-pull-secrets";
+import type { ResolvedImagePullSecretName } from "./image-pull-secrets";
 import {
   customYamlToDeployment,
   resolvePlaceholders,
@@ -224,6 +221,14 @@ interface ResolveAvailableImageDigestOptions {
   resolvedImagePullSecretNames?: ResolvedImagePullSecretName[];
   timeoutMs?: number;
   pollIntervalMs?: number;
+}
+
+interface ProbeSchedulingSpec {
+  imagePullSecrets?: ResolvedImagePullSecretName[];
+  nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null;
+  tolerations?: k8s.V1Toleration[] | null;
+  serviceAccountName?: string | null;
+  runtimeClassName?: string | null;
 }
 
 /**
@@ -1723,24 +1728,66 @@ export default class K8sDeployment {
   async resolveAvailableImageDigest(
     options: ResolveAvailableImageDigestOptions,
   ): Promise<string> {
-    const catalogItem = await this.getCatalogItem();
-    const serviceAccountName = catalogItem?.localConfig?.serviceAccount;
-    const resolvedImagePullSecretNames =
-      options.resolvedImagePullSecretNames ??
-      collectImagePullSecretNames(
-        catalogItem?.localConfig?.imagePullSecrets,
-        [],
-      );
+    const schedulingSpec = await this.resolveProbeSchedulingSpec(options.resolvedImagePullSecretNames);
 
     return this.imageDigestProbe.resolveAvailableImageDigest({
       image: options.image,
-      imagePullSecrets: resolvedImagePullSecretNames,
-      nodeSelector: getCachedPlatformNodeSelector(),
-      tolerations: getCachedPlatformTolerations(),
-      serviceAccountName,
+      imagePullSecrets: schedulingSpec.imagePullSecrets,
+      nodeSelector: schedulingSpec.nodeSelector,
+      tolerations: schedulingSpec.tolerations,
+      serviceAccountName: schedulingSpec.serviceAccountName,
+      runtimeClassName: schedulingSpec.runtimeClassName,
       timeoutMs: options.timeoutMs,
       pollIntervalMs: options.pollIntervalMs,
     });
+  }
+
+  private async resolveProbeSchedulingSpec(resolvedImagePullSecretNames?: ResolvedImagePullSecretName[]): Promise<ProbeSchedulingSpec> {
+    let deployment: k8s.V1Deployment;
+    try {
+      deployment = await this.k8sAppsApi.readNamespacedDeployment({
+        name: this.deploymentName,
+        namespace: this.namespace,
+      });
+    } catch (error) {
+      throw new Error(
+        `Failed to resolve scheduling constraints for MCP server deployment ${this.deploymentName}`,
+        { cause: error },
+      );
+    }
+
+    const podSpec = deployment.spec?.template?.spec;
+    if (!podSpec) {
+      throw new Error(
+        `MCP server deployment ${this.deploymentName} has no pod template spec for image digest probing`,
+      );
+    }
+
+    const imagePullSecrets = podSpec.imagePullSecrets?.flatMap((secret) =>
+      secret.name ? [{ name: secret.name }] : [],
+    ) ?? [];
+    if (
+      resolvedImagePullSecretNames?.length &&
+      imagePullSecrets.length === 0
+    ) {
+      logger.debug(
+        {
+          mcpServerId: this.mcpServer.id,
+          deploymentName: this.deploymentName,
+          resolvedImagePullSecretCount:
+            resolvedImagePullSecretNames.length,
+        },
+        "Resolved image pull secrets exist but MCP Deployment pod template has none; image digest probe will match the Deployment pod template",
+      );
+    }
+
+    return {
+      imagePullSecrets: imagePullSecrets.length ? imagePullSecrets : undefined,
+      nodeSelector: podSpec.nodeSelector,
+      tolerations: podSpec.tolerations,
+      serviceAccountName: podSpec.serviceAccountName,
+      runtimeClassName: podSpec.runtimeClassName,
+    };
   }
 
   /**

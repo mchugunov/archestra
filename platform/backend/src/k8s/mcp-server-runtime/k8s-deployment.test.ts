@@ -4578,12 +4578,15 @@ describe("K8sImageDigestProbe.generatePodSpec", () => {
 describe("K8sDeployment.resolveAvailableImageDigest", () => {
   function createProbeDeployment(options?: {
     readPod?: k8s.V1Pod;
+    readDeployment?: k8s.V1Deployment;
+    readDeploymentError?: unknown;
     deleteError?: unknown;
     imageDigestProbe?: ImageDigestProbe;
   }): {
     deployment: K8sDeployment;
     createNamespacedPod: ReturnType<typeof vi.fn>;
     readNamespacedPod: ReturnType<typeof vi.fn>;
+    readNamespacedDeployment: ReturnType<typeof vi.fn>;
     deleteNamespacedPod: ReturnType<typeof vi.fn>;
   } {
     const mcpServer = {
@@ -4615,6 +4618,23 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
     const deleteNamespacedPod = options?.deleteError
       ? vi.fn().mockRejectedValue(options.deleteError)
       : vi.fn().mockResolvedValue({});
+    const readNamespacedDeployment = options?.readDeploymentError
+      ? vi.fn().mockRejectedValue(options.readDeploymentError)
+      : vi.fn().mockResolvedValue(
+          options?.readDeployment ?? {
+            spec: {
+              template: {
+                spec: {
+                  imagePullSecrets: [{ name: "registry-secret" }],
+                  nodeSelector: { "node-pool": "mcp" },
+                  tolerations: [{ key: "workload", operator: "Exists" }],
+                  serviceAccountName: "mcp-runner",
+                  runtimeClassName: "mcp-runtime",
+                },
+              },
+            },
+          },
+        );
 
     const deployment = new K8sDeployment({
       mcpServer,
@@ -4623,7 +4643,7 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
         readNamespacedPod,
         deleteNamespacedPod,
       } as unknown as k8s.CoreV1Api,
-      k8sAppsApi: {} as k8s.AppsV1Api,
+      k8sAppsApi: { readNamespacedDeployment } as unknown as k8s.AppsV1Api,
       k8sAttach: {} as Attach,
       k8sLog: {} as Log,
       k8sExec: {} as Exec,
@@ -4636,6 +4656,7 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
       deployment,
       createNamespacedPod,
       readNamespacedPod,
+      readNamespacedDeployment,
       deleteNamespacedPod,
     };
   }
@@ -4645,9 +4666,13 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
       .fn<ImageDigestProbe["resolveAvailableImageDigest"]>()
       .mockResolvedValue("sha256:delegated");
     const imageDigestProbe = { resolveAvailableImageDigest };
-    const { deployment, createNamespacedPod } = createProbeDeployment({
-      imageDigestProbe,
-    });
+    const { deployment, createNamespacedPod, readNamespacedDeployment } =
+      createProbeDeployment({
+        imageDigestProbe,
+      });
+    resetPlatformNodeSelectorCache();
+    resetPlatformTolerationsCache();
+    expect(getCachedPlatformNodeSelector()).toBeNull();
 
     await expect(
       deployment.resolveAvailableImageDigest({
@@ -4662,10 +4687,18 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
       expect.objectContaining({
         image: "ghcr.io/example/server:latest",
         imagePullSecrets: [{ name: "registry-secret" }],
+        nodeSelector: { "node-pool": "mcp" },
+        tolerations: [{ key: "workload", operator: "Exists" }],
+        serviceAccountName: "mcp-runner",
+        runtimeClassName: "mcp-runtime",
         timeoutMs: 20,
         pollIntervalMs: 1,
       }),
     );
+    expect(readNamespacedDeployment).toHaveBeenCalledWith({
+      name: "mcp-test-server",
+      namespace: "archestra-runtime",
+    });
     expect(createNamespacedPod).not.toHaveBeenCalled();
   });
 
@@ -4694,6 +4727,10 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
         }),
         spec: expect.objectContaining({
           imagePullSecrets: [{ name: "registry-secret" }],
+          nodeSelector: { "node-pool": "mcp" },
+          tolerations: [{ key: "workload", operator: "Exists" }],
+          serviceAccountName: "mcp-runner",
+          runtimeClassName: "mcp-runtime",
         }),
       }),
     });
@@ -4706,6 +4743,45 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
       name: podName,
       namespace: "archestra-runtime",
     });
+  });
+
+  test("fails explicitly when deployment scheduling constraints cannot be read", async () => {
+    const readError = new Error("deployment read failed");
+    const { deployment, createNamespacedPod } = createProbeDeployment({
+      readDeploymentError: readError,
+    });
+
+    await expect(
+      deployment.resolveAvailableImageDigest({
+        image: "ghcr.io/example/server:latest",
+        timeoutMs: 20,
+      }),
+    ).rejects.toThrow(
+      "Failed to resolve scheduling constraints for MCP server deployment mcp-test-server",
+    );
+
+    expect(createNamespacedPod).not.toHaveBeenCalled();
+  });
+
+  test("fails explicitly when deployment pod template spec is missing", async () => {
+    const { deployment, createNamespacedPod } = createProbeDeployment({
+      readDeployment: {
+        spec: {
+          template: {},
+        },
+      } as k8s.V1Deployment,
+    });
+
+    await expect(
+      deployment.resolveAvailableImageDigest({
+        image: "ghcr.io/example/server:latest",
+        timeoutMs: 20,
+      }),
+    ).rejects.toThrow(
+      "MCP server deployment mcp-test-server has no pod template spec for image digest probing",
+    );
+
+    expect(createNamespacedPod).not.toHaveBeenCalled();
   });
 
   test("deletes the probe pod when digest resolution times out", async () => {

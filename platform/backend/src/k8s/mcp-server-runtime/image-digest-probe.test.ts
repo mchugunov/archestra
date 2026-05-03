@@ -47,6 +47,7 @@ describe("K8sImageDigestProbe.generatePodSpec", () => {
         },
       ],
       serviceAccountName: "mcp-runner",
+      runtimeClassName: "mcp-runtime",
       activeDeadlineSeconds: 65,
     });
 
@@ -67,6 +68,7 @@ describe("K8sImageDigestProbe.generatePodSpec", () => {
       automountServiceAccountToken: false,
       activeDeadlineSeconds: 65,
       serviceAccountName: "mcp-runner",
+      runtimeClassName: "mcp-runtime",
       imagePullSecrets: [{ name: "registry-secret" }],
       nodeSelector: { "node-pool": "mcp" },
       tolerations: [
@@ -109,7 +111,26 @@ describe("K8sImageDigestProbe.generatePodSpec", () => {
     expect(pod.spec?.imagePullSecrets).toBeUndefined();
     expect(pod.spec?.nodeSelector).toBeUndefined();
     expect(pod.spec?.tolerations).toBeUndefined();
+    expect(pod.spec?.runtimeClassName).toBeUndefined();
     expect(pod.spec?.containers[0].imagePullPolicy).toBeUndefined();
+  });
+
+  test("does not include workload-only pod fields", () => {
+    const pod = K8sImageDigestProbe.generatePodSpec({
+      image: "ghcr.io/example/mcp-server:1.2.3",
+      podName: "mcp-image-probe-server-123-abc123-def456",
+      namespace: "archestra-runtime",
+      mcpServer: createMcpServer({
+        id: "server-123",
+        name: "Probe Server",
+      }),
+    });
+
+    expect(pod.spec?.volumes).toBeUndefined();
+    expect(pod.spec?.containers[0].env).toBeUndefined();
+    expect(pod.spec?.containers[0].envFrom).toBeUndefined();
+    expect(pod.spec?.containers[0].volumeMounts).toBeUndefined();
+    expect(pod.spec?.containers[0].ports).toBeUndefined();
   });
 });
 
@@ -124,6 +145,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
         nodeSelector: { "node-pool": "mcp" },
         tolerations: [{ key: "workload", operator: "Exists" }],
         serviceAccountName: "mcp-runner",
+        runtimeClassName: "mcp-runtime",
       }),
     ).resolves.toBe("sha256:abc123");
 
@@ -139,6 +161,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
           imagePullSecrets: [{ name: "registry-secret" }],
           nodeSelector: { "node-pool": "mcp" },
           serviceAccountName: "mcp-runner",
+          runtimeClassName: "mcp-runtime",
           tolerations: [{ key: "workload", operator: "Exists" }],
         }),
       }),

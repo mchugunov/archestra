@@ -928,6 +928,49 @@ describe("processMcpServerImageUpdateCheck", () => {
     });
   });
 
+  test("persists failed state when probe scheduling constraints cannot be resolved", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: new Error(
+        "Failed to resolve scheduling constraints for MCP server deployment mcp-server",
+      ),
+    });
+
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: CHECKED_AT,
+      status: "check_failed",
+      lastFailedAt: CHECKED_AT,
+      lastErrorCategory: "available_digest_error",
+      lastErrorMessage:
+        "Failed to resolve scheduling constraints for MCP server deployment mcp-server",
+      consecutiveFailureCount: 1,
+    });
+  });
+
   test("persists timeout failure state with a safe display message", async ({
     makeInternalMcpCatalog,
     makeMcpServer,

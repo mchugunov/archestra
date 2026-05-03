@@ -23,6 +23,7 @@ export interface ResolveAvailableImageDigestProbeOptions {
   nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null;
   tolerations?: k8s.V1Toleration[] | null;
   serviceAccountName?: string | null;
+  runtimeClassName?: string | null;
   timeoutMs?: number;
   pollIntervalMs?: number;
 }
@@ -42,6 +43,7 @@ export interface ImageDigestProbePodSpecOptions {
   nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null;
   tolerations?: k8s.V1Toleration[] | null;
   serviceAccountName?: string | null;
+  runtimeClassName?: string | null;
   activeDeadlineSeconds?: number;
 }
 
@@ -83,6 +85,7 @@ export class K8sImageDigestProbe implements ImageDigestProbe {
         nodeSelector: options.nodeSelector,
         tolerations: options.tolerations,
         serviceAccountName: options.serviceAccountName,
+        runtimeClassName: options.runtimeClassName,
         activeDeadlineSeconds: Math.ceil(timeoutMs / TimeInMs.Second) + 5,
       }),
     });
@@ -127,6 +130,9 @@ export class K8sImageDigestProbe implements ImageDigestProbe {
           : {}),
         ...(options.serviceAccountName
           ? { serviceAccountName: options.serviceAccountName }
+          : {}),
+        ...(options.runtimeClassName
+          ? { runtimeClassName: options.runtimeClassName }
           : {}),
         ...(options.nodeSelector && Object.keys(options.nodeSelector).length > 0
           ? { nodeSelector: options.nodeSelector }
