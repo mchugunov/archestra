@@ -255,28 +255,28 @@ describe("McpServerImageUpdateStateModel", () => {
       });
 
       await expect(
-        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
-          mcpServerId: restartedServer.id,
-          availableImageDigest: "sha256:new",
-        }),
+        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest(
+          restartedServer.id,
+          "sha256:new",
+        ),
       ).resolves.toBe(true);
       await expect(
-        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
-          mcpServerId: restartedServer.id,
-          availableImageDigest: "sha256:other",
-        }),
+        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest(
+          restartedServer.id,
+          "sha256:other",
+        ),
       ).resolves.toBe(false);
       await expect(
-        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
-          mcpServerId: notRestartedServer.id,
-          availableImageDigest: "sha256:new",
-        }),
+        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest(
+          notRestartedServer.id,
+          "sha256:new",
+        ),
       ).resolves.toBe(false);
       await expect(
-        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
-          mcpServerId: failedServer.id,
-          availableImageDigest: "sha256:new",
-        }),
+        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest(
+          failedServer.id,
+          "sha256:new",
+        ),
       ).resolves.toBe(false);
     });
   });

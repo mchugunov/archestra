@@ -97,10 +97,10 @@ class McpServerImageUpdateStateModel {
     return state ?? null;
   }
 
-  static async hasRestartTriggeredForDigest(params: {
-    mcpServerId: string;
-    availableImageDigest: string;
-  }): Promise<boolean> {
+  static async hasRestartTriggeredForDigest(
+    mcpServerId: string,
+    availableImageDigest: string,
+  ): Promise<boolean> {
     const [state] = await db
       .select({
         mcpServerId: schema.mcpServerImageUpdateStatesTable.mcpServerId,
@@ -108,13 +108,10 @@ class McpServerImageUpdateStateModel {
       .from(schema.mcpServerImageUpdateStatesTable)
       .where(
         and(
-          eq(
-            schema.mcpServerImageUpdateStatesTable.mcpServerId,
-            params.mcpServerId,
-          ),
+          eq(schema.mcpServerImageUpdateStatesTable.mcpServerId, mcpServerId),
           eq(
             schema.mcpServerImageUpdateStatesTable.availableImageDigest,
-            params.availableImageDigest,
+            availableImageDigest,
           ),
           eq(schema.mcpServerImageUpdateStatesTable.status, "reinstalling"),
           isNotNull(schema.mcpServerImageUpdateStatesTable.lastRestartedAt),

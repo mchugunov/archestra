@@ -40,22 +40,16 @@ class McpServerImageUpdateCheckLockModel {
     return rows.length > 0;
   }
 
-  static async release(params: {
-    mcpServerId: string;
-    checkRunId: string;
-  }): Promise<void> {
+  static async release(mcpServerId: string, checkRunId: string): Promise<void> {
     await db
       .delete(schema.mcpServerImageUpdateCheckLocksTable)
       .where(
         and(
           eq(
             schema.mcpServerImageUpdateCheckLocksTable.mcpServerId,
-            params.mcpServerId,
+            mcpServerId,
           ),
-          eq(
-            schema.mcpServerImageUpdateCheckLocksTable.checkRunId,
-            params.checkRunId,
-          ),
+          eq(schema.mcpServerImageUpdateCheckLocksTable.checkRunId, checkRunId),
         ),
       );
   }

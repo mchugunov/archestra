@@ -237,10 +237,7 @@ export class McpImageUpdateCheckerService {
         "Failed to check MCP server image update state",
       );
     } finally {
-      await McpServerImageUpdateCheckLockModel.release({
-        mcpServerId: server.id,
-        checkRunId,
-      });
+      await McpServerImageUpdateCheckLockModel.release(server.id, checkRunId);
     }
   }
 
@@ -317,10 +314,7 @@ export class McpImageUpdateCheckerService {
         targetImageDigest,
       });
     } finally {
-      await McpServerImageUpdateCheckLockModel.release({
-        mcpServerId,
-        checkRunId,
-      });
+      await McpServerImageUpdateCheckLockModel.release(mcpServerId, checkRunId);
     }
   }
 
@@ -484,10 +478,10 @@ export class McpImageUpdateCheckerService {
     }
 
     const restartAlreadyTriggered =
-      await McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
-        mcpServerId: params.server.id,
-        availableImageDigest: params.availableImageDigest,
-      });
+      await McpServerImageUpdateStateModel.hasRestartTriggeredForDigest(
+        params.server.id,
+        params.availableImageDigest,
+      );
     if (restartAlreadyTriggered) {
       logger.info(
         createImageUpdateLogContext({

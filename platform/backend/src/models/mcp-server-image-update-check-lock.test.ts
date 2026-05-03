@@ -39,10 +39,7 @@ describe("McpServerImageUpdateCheckLockModel", () => {
       lockedUntil,
       now,
     });
-    await McpServerImageUpdateCheckLockModel.release({
-      mcpServerId: server.id,
-      checkRunId: "first-run",
-    });
+    await McpServerImageUpdateCheckLockModel.release(server.id, "first-run");
 
     const secondAcquired = await McpServerImageUpdateCheckLockModel.tryAcquire({
       mcpServerId: server.id,
