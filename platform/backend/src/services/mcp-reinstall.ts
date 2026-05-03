@@ -1,4 +1,3 @@
-import type { schema } from "@/database";
 import { McpServerRuntimeManager } from "@/k8s/mcp-server-runtime";
 import logger from "@/logging";
 import { McpServerModel, ToolModel } from "@/models";
@@ -223,17 +222,16 @@ export async function autoReinstallServer(
 
 export async function autoReinstallLocalMcpServerAfterImageUpdate(params: {
   server: McpServer;
-  catalogItem: ImageUpdateReinstallCatalogItem;
+  catalogItem: InternalMcpCatalog;
   runningImageDigest: string;
   availableImageDigest: string;
 }): Promise<void> {
   const { availableImageDigest, catalogItem, runningImageDigest, server } =
     params;
-  const reinstallCatalogItem = toInternalMcpCatalog(catalogItem);
   const logContext = {
     mcpServerId: server.id,
-    catalogId: reinstallCatalogItem.id,
-    catalogName: reinstallCatalogItem.name,
+    catalogId: catalogItem.id,
+    catalogName: catalogItem.name,
     runningImageDigest,
     availableImageDigest,
   };
@@ -249,7 +247,7 @@ export async function autoReinstallLocalMcpServerAfterImageUpdate(params: {
   });
 
   try {
-    await autoReinstallServer(server, reinstallCatalogItem);
+    await autoReinstallServer(server, catalogItem);
     await McpServerModel.update(server.id, {
       localInstallationStatus: "success",
       localInstallationError: null,
@@ -285,10 +283,6 @@ type ComparableLocalConfig = Pick<
   | "httpPath"
   | "serviceAccount"
 >;
-type InternalMcpCatalogRow = typeof schema.internalMcpCatalogTable.$inferSelect;
-type ImageUpdateReinstallCatalogItem =
-  | InternalMcpCatalog
-  | InternalMcpCatalogRow;
 
 /**
  * Extract prompted env vars from a catalog item as a map of key -> { required, type }
@@ -391,18 +385,4 @@ function requiredUserConfigChanged(
   }
 
   return false;
-}
-
-function toInternalMcpCatalog(
-  catalogItem: ImageUpdateReinstallCatalogItem,
-): InternalMcpCatalog {
-  if ("labels" in catalogItem && "teams" in catalogItem) {
-    return catalogItem;
-  }
-
-  return {
-    ...catalogItem,
-    labels: [],
-    teams: [],
-  };
 }

@@ -7,11 +7,17 @@ import {
   normalizeImageDigest,
 } from "@/k8s/mcp-server-runtime";
 import logger from "@/logging";
-import McpServerModel from "@/models/mcp-server";
+import McpServerModel, {
+  type LocalMcpServerImageUpdateCandidate,
+} from "@/models/mcp-server";
 import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-state";
 import { autoReinstallLocalMcpServerAfterImageUpdate } from "@/services/mcp-reinstall";
 import { taskQueueService } from "@/task-queue";
-import type { McpServer, McpServerImageUpdateStatus } from "@/types";
+import type {
+  InternalMcpCatalog,
+  McpServer,
+  McpServerImageUpdateStatus,
+} from "@/types";
 
 export class McpImageUpdateCheckerService {
   private readonly availableDigestTimeoutMs: number;
@@ -202,7 +208,7 @@ export class McpImageUpdateCheckerService {
   // ===== Private methods =====
 
   private async processEligibleServer(params: {
-    eligibleServer: EligibleMcpImageUpdateServer;
+    eligibleServer: LocalMcpServerImageUpdateCandidate;
     allowAutoRestart: boolean;
     applyJitter: boolean;
   }): Promise<void> {
@@ -230,7 +236,7 @@ export class McpImageUpdateCheckerService {
   }
 
   private resolveConfiguredImage(
-    catalog: Pick<EligibleMcpImageUpdateCatalog, "localConfig">,
+    catalog: Pick<InternalMcpCatalog, "localConfig">,
   ): string | null {
     const image = catalog.localConfig?.dockerImage?.trim();
     return image || null;
@@ -238,7 +244,7 @@ export class McpImageUpdateCheckerService {
 
   private async persistChangedImageState(params: {
     server: McpServer;
-    catalog: EligibleMcpImageUpdateCatalog;
+    catalog: InternalMcpCatalog;
     allowAutoRestart: boolean;
     checkedAt: Date;
     runningImageDigest: string;
@@ -329,13 +335,8 @@ export const mcpImageUpdateCheckerService = new McpImageUpdateCheckerService();
 
 // ===== Internal helpers =====
 
-type EligibleMcpImageUpdateServer = Awaited<
-  ReturnType<typeof McpServerModel.findLocalServersEligibleForImageUpdateCheck>
->[number];
-type EligibleMcpImageUpdateCatalog = EligibleMcpImageUpdateServer["catalog"];
-
 type ProcessMcpServerImageUpdateCheckParams = {
-  eligibleServer: EligibleMcpImageUpdateServer;
+  eligibleServer: LocalMcpServerImageUpdateCandidate;
   allowAutoRestart?: boolean;
   checkedAt?: Date;
 };
@@ -422,7 +423,7 @@ function parseMcpImageUpdateFollowUpPayload(
 
 function createImageUpdateLogContext(params: {
   server: McpServer;
-  catalog: Pick<EligibleMcpImageUpdateCatalog, "id" | "name">;
+  catalog: Pick<InternalMcpCatalog, "id" | "name">;
   image?: string;
   error?: unknown;
 }) {

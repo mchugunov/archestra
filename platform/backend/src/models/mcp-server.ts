@@ -8,6 +8,7 @@ import { secretManager } from "@/secrets-manager";
 import { computeSecretStorageType } from "@/secrets-manager/utils";
 import type {
   InsertMcpServer,
+  InternalMcpCatalog,
   McpServer,
   ResourceVisibilityScope,
   UpdateMcpServer,
@@ -20,6 +21,11 @@ import ToolModel from "./tool";
 
 // Alias for users table to avoid conflict with the owner LEFT JOIN
 const assignedUsersTable = alias(schema.usersTable, "assigned_users");
+
+export type LocalMcpServerImageUpdateCandidate = {
+  server: McpServer;
+  catalog: InternalMcpCatalog;
+};
 
 class McpServerModel {
   /**
@@ -401,13 +407,8 @@ class McpServerModel {
 
   static async findLocalServersEligibleForImageUpdateCheck(
     mcpServerId?: string,
-  ): Promise<
-    Array<{
-      server: typeof schema.mcpServersTable.$inferSelect;
-      catalog: typeof schema.internalMcpCatalogTable.$inferSelect;
-    }>
-  > {
-    return db
+  ): Promise<LocalMcpServerImageUpdateCandidate[]> {
+    const results = await db
       .select({
         server: schema.mcpServersTable,
         catalog: schema.internalMcpCatalogTable,
@@ -425,6 +426,15 @@ class McpServerModel {
           ...(mcpServerId ? [eq(schema.mcpServersTable.id, mcpServerId)] : []),
         ),
       );
+
+    return results.map(({ server, catalog }) => ({
+      server,
+      catalog: {
+        ...catalog,
+        labels: [],
+        teams: [],
+      },
+    }));
   }
 
   static async findByCatalogId(catalogId: string): Promise<McpServer[]> {

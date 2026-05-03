@@ -151,6 +151,8 @@ describe("McpServerModel", () => {
         id: enabledLocalCatalog.id,
         name: enabledLocalCatalog.name,
         serverType: "local",
+        labels: [],
+        teams: [],
         localConfig: {
           dockerImage: "localhost:5001/enabled-server:latest",
         },
