@@ -208,6 +208,196 @@ describe("processMcpServerImageUpdateCheck", () => {
     });
   });
 
+  test("skips an overlapping check for the same MCP server while a check is active", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    const runningDigest = createDeferredValue<string | null>();
+    const runtime = createRuntime({ availableDigest: "sha256:same" });
+    runtime.getRunningImageDigest.mockReturnValue(runningDigest.promise);
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    const firstCheck = service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+    await waitForCondition(
+      () => runtime.getRunningImageDigest.mock.calls.length === 1,
+    );
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: new Date("2026-01-01T00:11:00.000Z"),
+    });
+
+    expect(runtime.getRunningImageDigest).toHaveBeenCalledTimes(1);
+
+    runningDigest.resolve("sha256:same");
+    await firstCheck;
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      status: "up_to_date",
+      runningImageDigest: "sha256:same",
+      availableImageDigest: "sha256:same",
+    });
+  });
+
+  test("allows checks for different MCP servers to run concurrently", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const firstCatalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/first:stable" },
+    });
+    const secondCatalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/second:stable" },
+    });
+    const firstServer = await makeMcpServer({
+      catalogId: firstCatalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    const secondServer = await makeMcpServer({
+      catalogId: secondCatalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    const runtime = createRuntime({ availableDigest: "sha256:same" });
+    const startedServerIds: string[] = [];
+    const runningDigestRequests = new Map<
+      string,
+      DeferredValue<string | null>
+    >();
+    runtime.getRunningImageDigest.mockImplementation((mcpServerId) => {
+      startedServerIds.push(mcpServerId);
+      const deferred = createDeferredValue<string | null>();
+      runningDigestRequests.set(mcpServerId, deferred);
+      return deferred.promise;
+    });
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    const firstCheck = service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server: firstServer, catalog: firstCatalog },
+      checkedAt: CHECKED_AT,
+    });
+    const secondCheck = service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server: secondServer, catalog: secondCatalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    await waitForCondition(() => startedServerIds.length === 2);
+    expect(startedServerIds).toEqual(
+      expect.arrayContaining([firstServer.id, secondServer.id]),
+    );
+
+    for (const deferred of runningDigestRequests.values()) {
+      deferred.resolve("sha256:same");
+    }
+    await Promise.all([firstCheck, secondCheck]);
+
+    expect(runtime.getRunningImageDigest).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not trigger duplicate auto-reinstall for a digest already restarted", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    await McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: server.id,
+      lastCheckedAt: new Date("2026-01-01T00:05:00.000Z"),
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      status: "restart_triggered",
+      lastRestartedAt: new Date("2026-01-01T00:05:00.000Z"),
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const service = new TestMcpImageUpdateCheckerService({
+      runtime,
+    });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    expect(autoReinstallAfterImageUpdateMock).not.toHaveBeenCalled();
+    expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
+  });
+
+  test("does not let an older follow-up result regress newer up_to_date state", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    const newerCheckedAt = new Date("2026-01-01T00:20:00.000Z");
+    await McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: server.id,
+      lastCheckedAt: newerCheckedAt,
+      runningImageDigest: "sha256:new",
+      availableImageDigest: "sha256:new",
+      status: "up_to_date",
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      allowAutoRestart: false,
+      checkedAt: CHECKED_AT,
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: newerCheckedAt,
+      runningImageDigest: "sha256:new",
+      availableImageDigest: "sha256:new",
+      status: "up_to_date",
+    });
+  });
+
   test("does not persist restart_triggered when image update reinstall fails", async ({
     makeInternalMcpCatalog,
     makeMcpServer,
@@ -514,5 +704,30 @@ class TestMcpImageUpdateCheckerService extends McpImageUpdateCheckerService {
     scheduledFor: Date,
   ): Promise<void> {
     await this.scheduleFollowUpCheckMock({ mcpServerId, scheduledFor });
+  }
+}
+
+type DeferredValue<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+};
+
+function createDeferredValue<T>(): DeferredValue<T> {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+
+  return { promise, resolve };
+}
+
+async function waitForCondition(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error("Timed out waiting for condition");
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }

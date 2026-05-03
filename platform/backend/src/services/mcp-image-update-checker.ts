@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { TimeInMs } from "@shared";
 import { z } from "zod";
 import {
@@ -10,6 +11,7 @@ import logger from "@/logging";
 import McpServerModel, {
   type LocalMcpServerImageUpdateCandidate,
 } from "@/models/mcp-server";
+import McpServerImageUpdateCheckLockModel from "@/models/mcp-server-image-update-check-lock";
 import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-state";
 import { autoReinstallLocalMcpServerAfterImageUpdate } from "@/services/mcp-reinstall";
 import { taskQueueService } from "@/task-queue";
@@ -99,17 +101,36 @@ export class McpImageUpdateCheckerService {
       checkedAt = new Date(),
       eligibleServer: { server, catalog },
     } = params;
+    const checkRunId = randomUUID();
+    const lockAcquiredAt = new Date();
+    const lockAcquired = await McpServerImageUpdateCheckLockModel.tryAcquire({
+      mcpServerId: server.id,
+      checkRunId,
+      now: lockAcquiredAt,
+      lockedUntil: new Date(
+        lockAcquiredAt.getTime() + IMAGE_UPDATE_CHECK_LOCK_TTL_MS,
+      ),
+    });
 
-    const image = this.resolveConfiguredImage(catalog);
-    if (!image) {
-      logger.warn(
+    if (!lockAcquired) {
+      logger.info(
         createImageUpdateLogContext({ server, catalog }),
-        "Skipping MCP server image update check because no configured image was found",
+        "Skipping MCP server image update check because another check is already active",
       );
       return;
     }
 
+    let image: string | null = null;
     try {
+      image = this.resolveConfiguredImage(catalog);
+      if (!image) {
+        logger.warn(
+          createImageUpdateLogContext({ server, catalog }),
+          "Skipping MCP server image update check because no configured image was found",
+        );
+        return;
+      }
+
       if (isDigestPinnedImage(image)) {
         const pinnedDigest = normalizeImageDigest(image);
         await this.persistImageUpdateState({
@@ -171,9 +192,19 @@ export class McpImageUpdateCheckerService {
       });
     } catch (error) {
       logger.warn(
-        createImageUpdateLogContext({ server, catalog, image, error }),
+          createImageUpdateLogContext({
+          server,
+          catalog,
+          image: image ?? undefined,
+          error,
+        }),
         "Failed to check MCP server image update state",
       );
+    } finally {
+      await McpServerImageUpdateCheckLockModel.release({
+        mcpServerId: server.id,
+        checkRunId,
+      });
     }
   }
 
@@ -298,13 +329,29 @@ export class McpImageUpdateCheckerService {
       return;
     }
 
+    const restartAlreadyTriggered =
+      await McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
+        mcpServerId: params.server.id,
+        availableImageDigest: params.availableImageDigest,
+      });
+    if (restartAlreadyTriggered) {
+      logger.info(
+        createImageUpdateLogContext({
+          server: currentServer,
+          catalog: params.catalog,
+        }),
+        "Skipping MCP server automatic image reinstall because it was already triggered for this digest",
+      );
+      return;
+    }
+
     await autoReinstallLocalMcpServerAfterImageUpdate({
       server: currentServer,
       catalogItem: params.catalog,
       runningImageDigest: params.runningImageDigest,
       availableImageDigest: params.availableImageDigest,
     });
-    await this.persistImageUpdateState({
+    const statePersisted = await this.persistImageUpdateState({
       mcpServerId: params.server.id,
       checkedAt: params.checkedAt,
       runningImageDigest: params.runningImageDigest,
@@ -312,7 +359,9 @@ export class McpImageUpdateCheckerService {
       status: "restart_triggered",
       lastRestartedAt: params.checkedAt,
     });
-    await this.scheduleDelayedFollowUpCheck(params.server.id);
+    if (statePersisted) {
+      await this.scheduleDelayedFollowUpCheck(params.server.id);
+    }
   }
 
   private async scheduleDelayedFollowUpCheck(
@@ -339,7 +388,7 @@ export class McpImageUpdateCheckerService {
     availableImageDigest: string | null;
     status: McpServerImageUpdateStatus;
     lastRestartedAt?: Date | null;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const state = {
       mcpServerId: params.mcpServerId,
       lastCheckedAt: params.checkedAt,
@@ -348,20 +397,36 @@ export class McpImageUpdateCheckerService {
       status: params.status,
     };
 
-    await McpServerImageUpdateStateModel.upsertLatestState(
-      params.lastRestartedAt === undefined
-        ? state
-        : {
-            ...state,
-            lastRestartedAt: params.lastRestartedAt,
-          },
-    );
+    const persistedState =
+      await McpServerImageUpdateStateModel.upsertLatestState(
+        params.lastRestartedAt === undefined
+          ? state
+          : {
+              ...state,
+              lastRestartedAt: params.lastRestartedAt,
+            },
+      );
+
+    if (!persistedState) {
+      logger.info(
+        {
+          mcpServerId: params.mcpServerId,
+          checkedAt: params.checkedAt,
+          status: params.status,
+        },
+        "Skipping stale MCP server image update state write",
+      );
+      return false;
+    }
+
+    return true;
   }
 }
 
 const DEFAULT_AVAILABLE_DIGEST_TIMEOUT_MS = TimeInMs.Second * 60;
 const DEFAULT_IMAGE_UPDATE_CHECK_CONCURRENCY_LIMIT = 3;
 const DEFAULT_IMAGE_UPDATE_CHECK_MAX_JITTER_MS = 2_000;
+const IMAGE_UPDATE_CHECK_LOCK_TTL_MS = TimeInMs.Minute * 10;
 const IMAGE_UPDATE_FOLLOW_UP_CHECK_DELAY_MS = TimeInMs.Second * 10;
 const MAX_IMAGE_UPDATE_CHECK_CONCURRENCY_LIMIT = 5;
 

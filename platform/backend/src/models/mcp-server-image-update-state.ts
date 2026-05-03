@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
 import db, { schema } from "@/database";
 import type {
   McpServerImageUpdateState,
@@ -51,10 +51,12 @@ class McpServerImageUpdateStateModel {
 
   static async upsertLatestState(
     params: UpsertMcpServerImageUpdateStateParams,
-  ): Promise<McpServerImageUpdateState> {
+  ): Promise<McpServerImageUpdateState | null> {
     const now = new Date();
     const insertValues = buildInsertValues(params);
     const updateValues = buildUpdateValues(params, now);
+    const shouldProtectAgainstStaleWrites =
+      params.lastCheckedAt instanceof Date;
 
     const [state] = await db
       .insert(schema.mcpServerImageUpdateStatesTable)
@@ -62,10 +64,48 @@ class McpServerImageUpdateStateModel {
       .onConflictDoUpdate({
         target: schema.mcpServerImageUpdateStatesTable.mcpServerId,
         set: updateValues,
+        ...(shouldProtectAgainstStaleWrites
+          ? {
+              where: or(
+                isNull(schema.mcpServerImageUpdateStatesTable.lastCheckedAt),
+                lte(
+                  schema.mcpServerImageUpdateStatesTable.lastCheckedAt,
+                  params.lastCheckedAt as Date,
+                ),
+              ),
+            }
+          : {}),
       })
       .returning();
 
-    return state;
+    return state ?? null;
+  }
+
+  static async hasRestartTriggeredForDigest(params: {
+    mcpServerId: string;
+    availableImageDigest: string;
+  }): Promise<boolean> {
+    const [state] = await db
+      .select({
+        mcpServerId: schema.mcpServerImageUpdateStatesTable.mcpServerId,
+      })
+      .from(schema.mcpServerImageUpdateStatesTable)
+      .where(
+        and(
+          eq(
+            schema.mcpServerImageUpdateStatesTable.mcpServerId,
+            params.mcpServerId,
+          ),
+          eq(
+            schema.mcpServerImageUpdateStatesTable.availableImageDigest,
+            params.availableImageDigest,
+          ),
+          isNotNull(schema.mcpServerImageUpdateStatesTable.lastRestartedAt),
+        ),
+      )
+      .limit(1);
+
+    return !!state;
   }
 }
 

@@ -9,8 +9,16 @@ CREATE TABLE "mcp_server_image_update_state" (
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "mcp_server_image_update_check_lock" (
+	"mcp_server_id" uuid PRIMARY KEY NOT NULL,
+	"check_run_id" text NOT NULL,
+	"locked_until" timestamp NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
 ALTER TABLE "mcp_server" ADD COLUMN "image_update_check_enabled" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "mcp_server" ADD COLUMN "image_update_auto_restart_enabled" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "mcp_server" ALTER COLUMN "image_update_check_enabled" SET DEFAULT true;--> statement-breakpoint
 ALTER TABLE "mcp_server" ALTER COLUMN "image_update_auto_restart_enabled" SET DEFAULT true;--> statement-breakpoint
-ALTER TABLE "mcp_server_image_update_state" ADD CONSTRAINT "mcp_server_image_update_state_mcp_server_id_mcp_server_id_fk" FOREIGN KEY ("mcp_server_id") REFERENCES "public"."mcp_server"("id") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "mcp_server_image_update_state" ADD CONSTRAINT "mcp_server_image_update_state_mcp_server_id_mcp_server_id_fk" FOREIGN KEY ("mcp_server_id") REFERENCES "public"."mcp_server"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "mcp_server_image_update_check_lock" ADD CONSTRAINT "mcp_server_image_update_check_lock_mcp_server_id_mcp_server_id_fk" FOREIGN KEY ("mcp_server_id") REFERENCES "public"."mcp_server"("id") ON DELETE cascade ON UPDATE no action;

@@ -116,5 +116,118 @@ describe("McpServerImageUpdateStateModel", () => {
         lastRestartedAt,
       });
     });
+
+    test("does not let an older check overwrite newer state", async ({
+      makeMcpServer,
+    }) => {
+      const server = await makeMcpServer();
+      const newerCheckedAt = new Date("2026-01-01T00:10:00.000Z");
+      const olderCheckedAt = new Date("2026-01-01T00:05:00.000Z");
+
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: server.id,
+        lastCheckedAt: newerCheckedAt,
+        runningImageDigest: "sha256:new",
+        availableImageDigest: "sha256:new",
+        status: "up_to_date",
+      });
+      const staleResult =
+        await McpServerImageUpdateStateModel.upsertLatestState({
+          mcpServerId: server.id,
+          lastCheckedAt: olderCheckedAt,
+          runningImageDigest: "sha256:old",
+          availableImageDigest: "sha256:available",
+          status: "update_available",
+        });
+
+      const result = await McpServerImageUpdateStateModel.findByMcpServerId(
+        server.id,
+      );
+
+      expect(staleResult).toBeNull();
+      expect(result).toMatchObject({
+        mcpServerId: server.id,
+        lastCheckedAt: newerCheckedAt,
+        runningImageDigest: "sha256:new",
+        availableImageDigest: "sha256:new",
+        status: "up_to_date",
+      });
+    });
+
+    test("allows a newer check to overwrite older state", async ({
+      makeMcpServer,
+    }) => {
+      const server = await makeMcpServer();
+      const olderCheckedAt = new Date("2026-01-01T00:05:00.000Z");
+      const newerCheckedAt = new Date("2026-01-01T00:10:00.000Z");
+
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: server.id,
+        lastCheckedAt: olderCheckedAt,
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:available",
+        status: "update_available",
+      });
+      const updateResult =
+        await McpServerImageUpdateStateModel.upsertLatestState({
+          mcpServerId: server.id,
+          lastCheckedAt: newerCheckedAt,
+          runningImageDigest: "sha256:new",
+          availableImageDigest: "sha256:new",
+          status: "up_to_date",
+        });
+
+      expect(updateResult).toMatchObject({
+        mcpServerId: server.id,
+        lastCheckedAt: newerCheckedAt,
+        runningImageDigest: "sha256:new",
+        availableImageDigest: "sha256:new",
+        status: "up_to_date",
+      });
+    });
+  });
+
+  describe("hasRestartTriggeredForDigest", () => {
+    test("returns true only when the digest has already been restarted", async ({
+      makeMcpServer,
+    }) => {
+      const restartedServer = await makeMcpServer();
+      const notRestartedServer = await makeMcpServer();
+
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: restartedServer.id,
+        lastCheckedAt: new Date("2026-01-01T00:10:00.000Z"),
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:new",
+        status: "restart_triggered",
+        lastRestartedAt: new Date("2026-01-01T00:10:00.000Z"),
+      });
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: notRestartedServer.id,
+        lastCheckedAt: new Date("2026-01-01T00:10:00.000Z"),
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:new",
+        status: "update_available",
+      });
+
+      await expect(
+        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
+          mcpServerId: restartedServer.id,
+          availableImageDigest: "sha256:new",
+        }),
+      ).resolves.toBe(true);
+      await expect(
+        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
+          mcpServerId: restartedServer.id,
+          availableImageDigest: "sha256:other",
+        }),
+      ).resolves.toBe(false);
+      await expect(
+        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
+          mcpServerId: notRestartedServer.id,
+          availableImageDigest: "sha256:new",
+        }),
+      ).resolves.toBe(false);
+    });
   });
 });
