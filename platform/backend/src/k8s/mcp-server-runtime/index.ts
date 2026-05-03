@@ -1,4 +1,5 @@
 export * from "./image-digest";
+export * from "./image-digest-probe";
 export type {
   ImageUpdateRuntime,
   ResolveAvailableImageDigestRuntimeParams,

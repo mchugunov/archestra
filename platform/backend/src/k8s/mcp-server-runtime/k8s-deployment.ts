@@ -1,4 +1,3 @@
-import { createHash, randomUUID } from "node:crypto";
 import { PassThrough } from "node:stream";
 import type * as k8s from "@kubernetes/client-node";
 import type { Attach, Exec } from "@kubernetes/client-node";
@@ -25,6 +24,10 @@ import {
   MCP_SERVER_CONTAINER_NAME,
   normalizeImageDigest,
 } from "./image-digest";
+import {
+  type ImageDigestProbe,
+  K8sImageDigestProbe,
+} from "./image-digest-probe";
 import {
   collectImagePullSecretNames,
   type ResolvedImagePullSecretName,
@@ -213,18 +216,7 @@ interface K8sDeploymentOptions {
   userConfigValues?: Record<string, string>;
   environmentValues?: Record<string, string>;
   k8sExec: Exec;
-}
-
-interface ImageDigestProbePodSpecOptions {
-  image: string;
-  podName: string;
-  namespace: string;
-  mcpServer: McpServer;
-  imagePullSecrets?: ResolvedImagePullSecretName[];
-  nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null;
-  tolerations?: k8s.V1Toleration[] | null;
-  serviceAccountName?: string | null;
-  activeDeadlineSeconds?: number;
+  imageDigestProbe?: ImageDigestProbe;
 }
 
 interface ResolveAvailableImageDigestOptions {
@@ -240,10 +232,6 @@ interface ResolveAvailableImageDigestOptions {
 export default class K8sDeployment {
   private static readonly MAX_K8S_LABEL_LENGTH = 63;
   private static readonly HTTP_SERVICE_SUFFIX = "-service";
-  private static readonly IMAGE_DIGEST_PROBE_CONTAINER_NAME =
-    "mcp-image-digest-probe";
-  private static readonly IMAGE_DIGEST_PROBE_TIMEOUT_MS = TimeInMs.Second * 60;
-  private static readonly IMAGE_DIGEST_PROBE_POLL_INTERVAL_MS = TimeInMs.Second;
   private mcpServer: McpServer;
   private k8sApi: k8s.CoreV1Api;
   private k8sAppsApi: k8s.AppsV1Api;
@@ -265,6 +253,7 @@ export default class K8sDeployment {
   private catalogItem?: InternalMcpCatalog | null;
   private userConfigValues?: Record<string, string>;
   private environmentValues?: Record<string, string>;
+  private imageDigestProbe: ImageDigestProbe;
 
   // Track assigned port for HTTP-based MCP servers
   assignedHttpPort?: number;
@@ -282,6 +271,13 @@ export default class K8sDeployment {
     this.catalogItem = options.catalogItem;
     this.userConfigValues = options.userConfigValues;
     this.environmentValues = options.environmentValues;
+    this.imageDigestProbe =
+      options.imageDigestProbe ??
+      new K8sImageDigestProbe({
+        k8sApi: options.k8sApi,
+        namespace: options.namespace,
+        mcpServer: options.mcpServer,
+      });
     this.deploymentName = K8sDeployment.constructDeploymentName(
       options.mcpServer,
       options.catalogItem,
@@ -716,66 +712,6 @@ export default class K8sDeployment {
       );
       throw error;
     }
-  }
-
-  /**
-   * Generate a short-lived pod that asks Kubernetes to resolve an image digest.
-   */
-  static generateImageDigestProbePodSpec(
-    options: ImageDigestProbePodSpecOptions,
-  ): k8s.V1Pod {
-    const labels = sanitizeMetadataLabels({
-      app: "mcp-image-digest-probe",
-      "mcp-server-probe-id": options.mcpServer.id,
-      "mcp-server-name": options.mcpServer.name,
-    });
-
-    return {
-      apiVersion: "v1",
-      kind: "Pod",
-      metadata: {
-        name: options.podName,
-        namespace: options.namespace,
-        labels,
-      },
-      spec: {
-        restartPolicy: "Never",
-        terminationGracePeriodSeconds: 0,
-        enableServiceLinks: false,
-        automountServiceAccountToken: false,
-        ...(options.activeDeadlineSeconds
-          ? { activeDeadlineSeconds: options.activeDeadlineSeconds }
-          : {}),
-        ...(options.serviceAccountName
-          ? { serviceAccountName: options.serviceAccountName }
-          : {}),
-        ...(options.nodeSelector && Object.keys(options.nodeSelector).length > 0
-          ? { nodeSelector: options.nodeSelector }
-          : {}),
-        ...(options.tolerations?.length
-          ? { tolerations: options.tolerations }
-          : {}),
-        ...(options.imagePullSecrets?.length
-          ? { imagePullSecrets: options.imagePullSecrets }
-          : {}),
-        containers: [
-          {
-            name: K8sDeployment.IMAGE_DIGEST_PROBE_CONTAINER_NAME,
-            image: options.image,
-            command: ["/bin/true"],
-            imagePullPolicy: K8sDeployment.getProbeImagePullPolicy(
-              options.image,
-            ),
-            resources: {
-              requests: {
-                cpu: "10m",
-                memory: "16Mi",
-              },
-            },
-          },
-        ],
-      },
-    };
   }
 
   /**
@@ -1787,12 +1723,6 @@ export default class K8sDeployment {
   async resolveAvailableImageDigest(
     options: ResolveAvailableImageDigestOptions,
   ): Promise<string> {
-    const timeoutMs =
-      options.timeoutMs ?? K8sDeployment.IMAGE_DIGEST_PROBE_TIMEOUT_MS;
-    const pollIntervalMs =
-      options.pollIntervalMs ??
-      K8sDeployment.IMAGE_DIGEST_PROBE_POLL_INTERVAL_MS;
-    const podName = this.constructImageDigestProbePodName(options.image);
     const catalogItem = await this.getCatalogItem();
     const serviceAccountName = catalogItem?.localConfig?.serviceAccount;
     const resolvedImagePullSecretNames =
@@ -1802,31 +1732,15 @@ export default class K8sDeployment {
         [],
       );
 
-    await this.k8sApi.createNamespacedPod({
-      namespace: this.namespace,
-      body: K8sDeployment.generateImageDigestProbePodSpec({
-        image: options.image,
-        podName,
-        namespace: this.namespace,
-        mcpServer: this.mcpServer,
-        imagePullSecrets: resolvedImagePullSecretNames,
-        nodeSelector: getCachedPlatformNodeSelector(),
-        tolerations: getCachedPlatformTolerations(),
-        serviceAccountName,
-        activeDeadlineSeconds: Math.ceil(timeoutMs / TimeInMs.Second) + 5,
-      }),
+    return this.imageDigestProbe.resolveAvailableImageDigest({
+      image: options.image,
+      imagePullSecrets: resolvedImagePullSecretNames,
+      nodeSelector: getCachedPlatformNodeSelector(),
+      tolerations: getCachedPlatformTolerations(),
+      serviceAccountName,
+      timeoutMs: options.timeoutMs,
+      pollIntervalMs: options.pollIntervalMs,
     });
-
-    try {
-      return await this.waitForProbeImageDigest({
-        podName,
-        image: options.image,
-        timeoutMs,
-        pollIntervalMs,
-      });
-    } finally {
-      await this.deleteImageDigestProbePod(podName);
-    }
   }
 
   /**
@@ -3039,12 +2953,6 @@ export default class K8sDeployment {
     return { k8sWs, podName };
   }
 
-  private static getProbeImagePullPolicy(
-    image: string,
-  ): k8s.V1Container["imagePullPolicy"] | undefined {
-    return isDigestPinnedImage(image) ? undefined : "Always";
-  }
-
   private static getDeploymentImagePullPolicy(
     image: string,
   ): k8s.V1Container["imagePullPolicy"] | undefined {
@@ -3058,130 +2966,4 @@ export default class K8sDeployment {
 
     return "Never";
   }
-
-  private constructImageDigestProbePodName(image: string): string {
-    const sanitizedId =
-      ensureStringIsRfc1123Compliant(this.mcpServer.id).slice(0, 48) ||
-      "server";
-    const imageHash = createHash("sha256")
-      .update(image)
-      .digest("hex")
-      .slice(0, 12);
-    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
-
-    return `mcp-image-probe-${sanitizedId}-${imageHash}-${suffix}`;
-  }
-
-  private async waitForProbeImageDigest(options: {
-    podName: string;
-    image: string;
-    timeoutMs: number;
-    pollIntervalMs: number;
-  }): Promise<string> {
-    const deadline = Date.now() + options.timeoutMs;
-
-    do {
-      const pod = await this.k8sApi.readNamespacedPod({
-        name: options.podName,
-        namespace: this.namespace,
-      });
-      const digest = this.getProbePodImageDigest(pod);
-      if (digest) {
-        return digest;
-      }
-
-      const pullFailureMessage = this.getProbePodPullFailureMessage(pod);
-      if (pullFailureMessage) {
-        throw new Error(
-          `Failed to resolve image digest for ${options.image}: ${pullFailureMessage}`,
-        );
-      }
-
-      await sleep(options.pollIntervalMs);
-    } while (Date.now() <= deadline);
-
-    throw new Error(
-      `Timed out resolving image digest for ${options.image} after ${options.timeoutMs}ms`,
-    );
-  }
-
-  private getProbePodImageDigest(pod: k8s.V1Pod): string | null {
-    const containerStatus = pod.status?.containerStatuses?.find(
-      (status) =>
-        status.name === K8sDeployment.IMAGE_DIGEST_PROBE_CONTAINER_NAME,
-    );
-    if (!containerStatus?.imageID) {
-      return null;
-    }
-
-    const digest = normalizeImageDigest(containerStatus.imageID);
-    if (!digest) {
-      throw new Error(
-        `Probe pod image ID did not contain a sha256 digest: ${containerStatus.imageID}`,
-      );
-    }
-
-    return digest;
-  }
-
-  private getProbePodPullFailureMessage(pod: k8s.V1Pod): string | null {
-    const containerStatus = pod.status?.containerStatuses?.find(
-      (status) =>
-        status.name === K8sDeployment.IMAGE_DIGEST_PROBE_CONTAINER_NAME,
-    );
-    const waiting = containerStatus?.state?.waiting;
-    if (!waiting?.reason) {
-      return null;
-    }
-
-    if (!IMAGE_DIGEST_PROBE_PULL_FAILURE_REASONS.has(waiting.reason)) {
-      return null;
-    }
-
-    return waiting.message
-      ? `${waiting.reason} - ${waiting.message}`
-      : waiting.reason;
-  }
-
-  private async deleteImageDigestProbePod(podName: string): Promise<void> {
-    try {
-      await this.k8sApi.deleteNamespacedPod({
-        name: podName,
-        namespace: this.namespace,
-      });
-    } catch (error) {
-      if (isK8sNotFoundError(error)) {
-        logger.debug(
-          {
-            mcpServerId: this.mcpServer.id,
-            podName,
-            namespace: this.namespace,
-          },
-          "MCP image digest probe pod was already deleted",
-        );
-        return;
-      }
-
-      logger.warn(
-        {
-          err: error,
-          mcpServerId: this.mcpServer.id,
-          podName,
-          namespace: this.namespace,
-        },
-        "Failed to delete MCP image digest probe pod",
-      );
-    }
-  }
-}
-
-const IMAGE_DIGEST_PROBE_PULL_FAILURE_REASONS = new Set([
-  "ErrImagePull",
-  "ImagePullBackOff",
-  "ErrImageNeverPull",
-  "InvalidImageName",
-]);
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

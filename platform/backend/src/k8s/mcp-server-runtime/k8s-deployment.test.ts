@@ -8,6 +8,10 @@ import config from "@/config";
 import logger from "@/logging";
 import { describe, expect, test } from "@/test";
 import type { McpServer } from "@/types";
+import {
+  type ImageDigestProbe,
+  K8sImageDigestProbe,
+} from "./image-digest-probe";
 import K8sDeployment, {
   fetchPlatformPodNodeSelector,
   fetchPlatformPodTolerations,
@@ -4490,14 +4494,14 @@ describe("K8sDeployment.getRunningImageDigest", () => {
   });
 });
 
-describe("K8sDeployment.generateImageDigestProbePodSpec", () => {
+describe("K8sImageDigestProbe.generatePodSpec", () => {
   test("generates a short-lived probe pod for a tag-based image", () => {
     const mcpServer = {
       id: "server-123",
       name: "Probe Server",
     } as unknown as McpServer;
 
-    const pod = K8sDeployment.generateImageDigestProbePodSpec({
+    const pod = K8sImageDigestProbe.generatePodSpec({
       image: "ghcr.io/example/mcp-server:1.2.3",
       podName: "mcp-image-probe-server-123-abc123-def456",
       namespace: "archestra-runtime",
@@ -4560,7 +4564,7 @@ describe("K8sDeployment.generateImageDigestProbePodSpec", () => {
       name: "Probe Server",
     } as unknown as McpServer;
 
-    const pod = K8sDeployment.generateImageDigestProbePodSpec({
+    const pod = K8sImageDigestProbe.generatePodSpec({
       image: "ghcr.io/example/mcp-server@sha256:abc123",
       podName: "mcp-image-probe-server-123-abc123-def456",
       namespace: "archestra-runtime",
@@ -4575,6 +4579,7 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
   function createProbeDeployment(options?: {
     readPod?: k8s.V1Pod;
     deleteError?: unknown;
+    imageDigestProbe?: ImageDigestProbe;
   }): {
     deployment: K8sDeployment;
     createNamespacedPod: ReturnType<typeof vi.fn>;
@@ -4624,6 +4629,7 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
       k8sExec: {} as Exec,
       namespace: "archestra-runtime",
       catalogItem: null,
+      imageDigestProbe: options?.imageDigestProbe,
     });
 
     return {
@@ -4633,6 +4639,35 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
       deleteNamespacedPod,
     };
   }
+
+  test("delegates available digest resolution to the injected probe", async () => {
+    const resolveAvailableImageDigest = vi
+      .fn<ImageDigestProbe["resolveAvailableImageDigest"]>()
+      .mockResolvedValue("sha256:delegated");
+    const imageDigestProbe = { resolveAvailableImageDigest };
+    const { deployment, createNamespacedPod } = createProbeDeployment({
+      imageDigestProbe,
+    });
+
+    await expect(
+      deployment.resolveAvailableImageDigest({
+        image: "ghcr.io/example/server:latest",
+        resolvedImagePullSecretNames: [{ name: "registry-secret" }],
+        timeoutMs: 20,
+        pollIntervalMs: 1,
+      }),
+    ).resolves.toBe("sha256:delegated");
+
+    expect(resolveAvailableImageDigest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        image: "ghcr.io/example/server:latest",
+        imagePullSecrets: [{ name: "registry-secret" }],
+        timeoutMs: 20,
+        pollIntervalMs: 1,
+      }),
+    );
+    expect(createNamespacedPod).not.toHaveBeenCalled();
+  });
 
   test("creates a probe pod, reads the resolved digest, and deletes the pod", async () => {
     const {
