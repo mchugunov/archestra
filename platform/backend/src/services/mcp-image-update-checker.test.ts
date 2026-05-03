@@ -3,6 +3,7 @@ import type {
   ImageUpdateRuntime,
   ResolveAvailableImageDigestRuntimeParams,
 } from "@/k8s/mcp-server-runtime";
+import McpServerModel from "@/models/mcp-server";
 import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-state";
 import { autoReinstallLocalMcpServerAfterImageUpdate } from "@/services/mcp-reinstall";
 import { beforeEach, describe, expect, test } from "@/test";
@@ -180,7 +181,10 @@ describe("processMcpServerImageUpdateCheck", () => {
     );
 
     expect(autoReinstallAfterImageUpdateMock).toHaveBeenCalledWith({
-      server,
+      server: expect.objectContaining({
+        id: server.id,
+        reinstallRequired: false,
+      }),
       catalogItem: catalog,
       runningImageDigest: "sha256:old",
       availableImageDigest: "sha256:new",
@@ -240,11 +244,54 @@ describe("processMcpServerImageUpdateCheck", () => {
     );
 
     expect(autoReinstallAfterImageUpdateMock).toHaveBeenCalledWith({
-      server,
+      server: expect.objectContaining({
+        id: server.id,
+        reinstallRequired: false,
+      }),
       catalogItem: catalog,
       runningImageDigest: "sha256:old",
       availableImageDigest: "sha256:new",
     });
+    expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
+    expect(state).toBeNull();
+  });
+
+  test("skips auto-reinstall when manual reinstall becomes required before reinstall is attempted", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    runtime.resolveAvailableImageDigest.mockImplementation(async () => {
+      await McpServerModel.update(server.id, { reinstallRequired: true });
+      return "sha256:new";
+    });
+    const service = new TestMcpImageUpdateCheckerService({
+      runtime,
+    });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(autoReinstallAfterImageUpdateMock).not.toHaveBeenCalled();
     expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
     expect(state).toBeNull();
   });

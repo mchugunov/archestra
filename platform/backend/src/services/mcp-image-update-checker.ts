@@ -264,8 +264,42 @@ export class McpImageUpdateCheckerService {
       return;
     }
 
+    const currentServer = await McpServerModel.findById(params.server.id);
+    if (!currentServer) {
+      logger.warn(
+        createImageUpdateLogContext({
+          server: params.server,
+          catalog: params.catalog,
+        }),
+        "Skipping MCP server automatic image reinstall because the server no longer exists",
+      );
+      return;
+    }
+
+    if (!currentServer.imageUpdateAutoRestartEnabled) {
+      await this.persistImageUpdateState({
+        mcpServerId: params.server.id,
+        checkedAt: params.checkedAt,
+        runningImageDigest: params.runningImageDigest,
+        availableImageDigest: params.availableImageDigest,
+        status: "update_available",
+      });
+      return;
+    }
+
+    if (currentServer.reinstallRequired) {
+      logger.info(
+        createImageUpdateLogContext({
+          server: currentServer,
+          catalog: params.catalog,
+        }),
+        "Skipping MCP server automatic image reinstall because manual reinstall is required",
+      );
+      return;
+    }
+
     await autoReinstallLocalMcpServerAfterImageUpdate({
-      server: params.server,
+      server: currentServer,
       catalogItem: params.catalog,
       runningImageDigest: params.runningImageDigest,
       availableImageDigest: params.availableImageDigest,

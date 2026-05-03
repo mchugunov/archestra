@@ -3,6 +3,7 @@ import type {
   ImageUpdateRuntime,
   ResolveAvailableImageDigestRuntimeParams,
 } from "@/k8s/mcp-server-runtime";
+import McpServerModel from "@/models/mcp-server";
 import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-state";
 import { McpImageUpdateCheckerService } from "@/services/mcp-image-update-checker";
 import { describe, expect, test } from "@/test";
@@ -94,6 +95,39 @@ describe("handleCheckMcpImageUpdates", () => {
     });
     expect(eligibleState?.lastCheckedAt).toBeInstanceOf(Date);
     expect(disabledState).toBeNull();
+  });
+
+  test("ignores local MCP servers that require manual reinstall", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: {
+        dockerImage: "registry.example.com/mcp/manual-reinstall:stable",
+      },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    await McpServerModel.update(server.id, { reinstallRequired: true });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.handleCheckMcpImageUpdates({});
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
+    expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
+    expect(state).toBeNull();
   });
 
   test("processes a targeted follow-up payload without triggering another restart", async ({

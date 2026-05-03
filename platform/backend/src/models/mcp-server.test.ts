@@ -120,6 +120,12 @@ describe("McpServerModel", () => {
           dockerImage: "localhost:5001/disabled-server:latest",
         },
       });
+      const reinstallRequiredLocalCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/reinstall-required-server:latest",
+        },
+      });
       const remoteCatalog = await makeInternalMcpCatalog({
         serverType: "remote",
         serverUrl: "https://remote.example.com/mcp",
@@ -134,6 +140,14 @@ describe("McpServerModel", () => {
         catalogId: disabledLocalCatalog.id,
         serverType: "local",
         imageUpdateCheckEnabled: false,
+      });
+      const reinstallRequiredLocalServer = await makeMcpServer({
+        catalogId: reinstallRequiredLocalCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: true,
+      });
+      await McpServerModel.update(reinstallRequiredLocalServer.id, {
+        reinstallRequired: true,
       });
       const remoteServer = await makeMcpServer({
         catalogId: remoteCatalog.id,
@@ -159,6 +173,11 @@ describe("McpServerModel", () => {
       });
       expect(
         results.some(({ server }) => server.id === disabledLocalServer.id),
+      ).toBe(false);
+      expect(
+        results.some(
+          ({ server }) => server.id === reinstallRequiredLocalServer.id,
+        ),
       ).toBe(false);
       expect(results.some(({ server }) => server.id === remoteServer.id)).toBe(
         false,

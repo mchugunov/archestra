@@ -423,6 +423,7 @@ class McpServerModel {
           eq(schema.mcpServersTable.serverType, "local"),
           eq(schema.internalMcpCatalogTable.serverType, "local"),
           eq(schema.mcpServersTable.imageUpdateCheckEnabled, true),
+          eq(schema.mcpServersTable.reinstallRequired, false),
           ...(mcpServerId ? [eq(schema.mcpServersTable.id, mcpServerId)] : []),
         ),
       );
