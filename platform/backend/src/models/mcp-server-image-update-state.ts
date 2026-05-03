@@ -201,7 +201,7 @@ export default McpServerImageUpdateStateModel;
 function buildInsertValues(params: UpsertMcpServerImageUpdateStateParams) {
   return {
     mcpServerId: params.mcpServerId,
-    ...pickDefinedLeanFields(params),
+    ...pickDefinedFields(params),
   };
 }
 
@@ -210,12 +210,12 @@ function buildUpdateValues(
   updatedAt: Date,
 ) {
   return {
-    ...pickDefinedLeanFields(params),
+    ...pickDefinedFields(params),
     updatedAt,
   };
 }
 
-function pickDefinedLeanFields(params: UpsertMcpServerImageUpdateStateParams) {
+function pickDefinedFields(params: UpsertMcpServerImageUpdateStateParams) {
   const fields: Partial<
     typeof schema.mcpServerImageUpdateStatesTable.$inferInsert
   > = {};

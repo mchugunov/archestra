@@ -1728,7 +1728,9 @@ export default class K8sDeployment {
   async resolveAvailableImageDigest(
     options: ResolveAvailableImageDigestOptions,
   ): Promise<string> {
-    const schedulingSpec = await this.resolveProbeSchedulingSpec(options.resolvedImagePullSecretNames);
+    const schedulingSpec = await this.resolveProbeSchedulingSpec(
+      options.resolvedImagePullSecretNames,
+    );
 
     return this.imageDigestProbe.resolveAvailableImageDigest({
       image: options.image,
@@ -1742,7 +1744,9 @@ export default class K8sDeployment {
     });
   }
 
-  private async resolveProbeSchedulingSpec(resolvedImagePullSecretNames?: ResolvedImagePullSecretName[]): Promise<ProbeSchedulingSpec> {
+  private async resolveProbeSchedulingSpec(
+    resolvedImagePullSecretNames?: ResolvedImagePullSecretName[],
+  ): Promise<ProbeSchedulingSpec> {
     let deployment: k8s.V1Deployment;
     try {
       deployment = await this.k8sAppsApi.readNamespacedDeployment({
@@ -1763,19 +1767,16 @@ export default class K8sDeployment {
       );
     }
 
-    const imagePullSecrets = podSpec.imagePullSecrets?.flatMap((secret) =>
-      secret.name ? [{ name: secret.name }] : [],
-    ) ?? [];
-    if (
-      resolvedImagePullSecretNames?.length &&
-      imagePullSecrets.length === 0
-    ) {
+    const imagePullSecrets =
+      podSpec.imagePullSecrets?.flatMap((secret) =>
+        secret.name ? [{ name: secret.name }] : [],
+      ) ?? [];
+    if (resolvedImagePullSecretNames?.length && imagePullSecrets.length === 0) {
       logger.debug(
         {
           mcpServerId: this.mcpServer.id,
           deploymentName: this.deploymentName,
-          resolvedImagePullSecretCount:
-            resolvedImagePullSecretNames.length,
+          resolvedImagePullSecretCount: resolvedImagePullSecretNames.length,
         },
         "Resolved image pull secrets exist but MCP Deployment pod template has none; image digest probe will match the Deployment pod template",
       );

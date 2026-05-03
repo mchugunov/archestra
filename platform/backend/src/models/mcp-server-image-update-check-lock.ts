@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, lte } from "drizzle-orm";
 import db, { schema } from "@/database";
 
 type TryAcquireMcpServerImageUpdateCheckLockParams = {
@@ -13,22 +13,29 @@ class McpServerImageUpdateCheckLockModel {
     params: TryAcquireMcpServerImageUpdateCheckLockParams,
   ): Promise<boolean> {
     const { checkRunId, lockedUntil, mcpServerId, now } = params;
-    const { rows } = await db.execute<{ mcpServerId: string }>(sql`
-      INSERT INTO mcp_server_image_update_check_lock (
-        mcp_server_id,
-        check_run_id,
-        locked_until,
-        updated_at
-      )
-      VALUES (${mcpServerId}, ${checkRunId}, ${lockedUntil}, ${now})
-      ON CONFLICT (mcp_server_id) DO UPDATE
-      SET
-        check_run_id = EXCLUDED.check_run_id,
-        locked_until = EXCLUDED.locked_until,
-        updated_at = EXCLUDED.updated_at
-      WHERE mcp_server_image_update_check_lock.locked_until <= ${now}
-      RETURNING mcp_server_id AS "mcpServerId"
-    `);
+    const rows = await db
+      .insert(schema.mcpServerImageUpdateCheckLocksTable)
+      .values({
+        mcpServerId,
+        checkRunId,
+        lockedUntil,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: schema.mcpServerImageUpdateCheckLocksTable.mcpServerId,
+        set: {
+          checkRunId,
+          lockedUntil,
+          updatedAt: now,
+        },
+        setWhere: lte(
+          schema.mcpServerImageUpdateCheckLocksTable.lockedUntil,
+          now,
+        ),
+      })
+      .returning({
+        mcpServerId: schema.mcpServerImageUpdateCheckLocksTable.mcpServerId,
+      });
 
     return rows.length > 0;
   }
