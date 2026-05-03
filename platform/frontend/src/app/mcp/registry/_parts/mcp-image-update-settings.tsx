@@ -293,11 +293,6 @@ const STATUS_CONFIG = {
     variant: "default",
     className: "bg-blue-600 text-white",
   },
-  restart_triggered: {
-    label: "Pending",
-    variant: "default",
-    className: "bg-blue-600 text-white",
-  },
   rollout_failed: {
     label: "Rollout failed",
     variant: "default",

@@ -99,7 +99,7 @@ describe("McpServerImageUpdateStateModel", () => {
         lastCheckedAt: secondCheckedAt,
         runningImageDigest: "sha256:new",
         availableImageDigest: "sha256:new",
-        status: "restart_triggered",
+        status: "reinstalling",
         lastRestartedAt,
       });
 
@@ -113,7 +113,7 @@ describe("McpServerImageUpdateStateModel", () => {
         lastCheckedAt: secondCheckedAt,
         runningImageDigest: "sha256:new",
         availableImageDigest: "sha256:new",
-        status: "restart_triggered",
+        status: "reinstalling",
         lastRestartedAt,
         consecutiveFailureCount: 0,
       });

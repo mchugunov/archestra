@@ -754,7 +754,7 @@ describe("processMcpServerImageUpdateCheck", () => {
     });
   });
 
-  test("does not persist restart_triggered when image update reinstall fails", async ({
+  test("does not persist reinstalling state when image update reinstall fails", async ({
     makeInternalMcpCatalog,
     makeMcpServer,
   }) => {

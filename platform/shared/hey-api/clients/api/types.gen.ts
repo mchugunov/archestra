@@ -37248,7 +37248,7 @@ export type GetMcpServersResponses = {
             runningImageDigest: string | null;
             availableImageDigest: string | null;
             targetImageDigest: string | null;
-            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'restart_triggered' | 'rollout_failed' | 'check_failed';
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'rollout_failed' | 'check_failed';
             lastRestartedAt: string | null;
             rolloutStartedAt: string | null;
             rolloutLastCheckedAt: string | null;
@@ -37407,7 +37407,7 @@ export type InstallMcpServerResponses = {
             runningImageDigest: string | null;
             availableImageDigest: string | null;
             targetImageDigest: string | null;
-            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'restart_triggered' | 'rollout_failed' | 'check_failed';
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'rollout_failed' | 'check_failed';
             lastRestartedAt: string | null;
             rolloutStartedAt: string | null;
             rolloutLastCheckedAt: string | null;
@@ -37625,7 +37625,7 @@ export type GetMcpServerResponses = {
             runningImageDigest: string | null;
             availableImageDigest: string | null;
             targetImageDigest: string | null;
-            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'restart_triggered' | 'rollout_failed' | 'check_failed';
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'rollout_failed' | 'check_failed';
             lastRestartedAt: string | null;
             rolloutStartedAt: string | null;
             rolloutLastCheckedAt: string | null;
@@ -37761,7 +37761,7 @@ export type UpdateMcpServerResponses = {
             runningImageDigest: string | null;
             availableImageDigest: string | null;
             targetImageDigest: string | null;
-            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'restart_triggered' | 'rollout_failed' | 'check_failed';
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'rollout_failed' | 'check_failed';
             lastRestartedAt: string | null;
             rolloutStartedAt: string | null;
             rolloutLastCheckedAt: string | null;
@@ -37904,7 +37904,7 @@ export type ReauthenticateMcpServerResponses = {
             runningImageDigest: string | null;
             availableImageDigest: string | null;
             targetImageDigest: string | null;
-            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'restart_triggered' | 'rollout_failed' | 'check_failed';
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'rollout_failed' | 'check_failed';
             lastRestartedAt: string | null;
             rolloutStartedAt: string | null;
             rolloutLastCheckedAt: string | null;
@@ -38319,7 +38319,7 @@ export type ReinstallMcpServerResponses = {
             runningImageDigest: string | null;
             availableImageDigest: string | null;
             targetImageDigest: string | null;
-            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'restart_triggered' | 'rollout_failed' | 'check_failed';
+            status: 'unknown' | 'up_to_date' | 'update_available' | 'reinstalling' | 'rollout_failed' | 'check_failed';
             lastRestartedAt: string | null;
             rolloutStartedAt: string | null;
             rolloutLastCheckedAt: string | null;

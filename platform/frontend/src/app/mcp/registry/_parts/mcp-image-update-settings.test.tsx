@@ -70,38 +70,6 @@ describe("McpImageUpdateSettings", () => {
     expect(screen.getByText("Never")).toBeInTheDocument();
   });
 
-  it("renders restart_triggered as pending", () => {
-    render(
-      <McpImageUpdateSettings
-        variant="local"
-        installs={[
-          makeServer({
-            imageUpdateState: {
-              mcpServerId: "server-1",
-              lastCheckedAt: null,
-              runningImageDigest: null,
-              availableImageDigest: null,
-              targetImageDigest: null,
-              status: "restart_triggered",
-              lastRestartedAt: null,
-              rolloutStartedAt: null,
-              rolloutLastCheckedAt: null,
-              rolloutAttemptCount: 0,
-              lastSuccessfulCheckedAt: null,
-              lastFailedAt: null,
-              lastErrorCategory: null,
-              lastErrorMessage: null,
-              consecutiveFailureCount: 0,
-              updatedAt: "2026-01-02T03:04:05.000Z",
-            },
-          }),
-        ]}
-      />,
-    );
-
-    expect(screen.getByText("Pending")).toBeInTheDocument();
-  });
-
   it("renders reinstalling rollout status", () => {
     render(
       <McpImageUpdateSettings
