@@ -22,6 +22,7 @@ import { taskQueueService } from "@/task-queue";
 import type {
   InternalMcpCatalog,
   McpServer,
+  McpServerImageUpdateState,
   McpServerImageUpdateStatus,
 } from "@/types";
 
@@ -82,8 +83,8 @@ export class McpImageUpdateCheckerService {
   async handleCheckMcpImageUpdateFollowUp(
     payload: Record<string, unknown>,
   ): Promise<void> {
-    const mcpServerId = parseMcpImageUpdateFollowUpPayload(payload);
-    if (!mcpServerId) {
+    const followUpPayload = parseMcpImageUpdateFollowUpPayload(payload);
+    if (!followUpPayload) {
       logger.warn(
         { payload },
         "Skipping MCP image update follow-up task with invalid payload",
@@ -91,9 +92,9 @@ export class McpImageUpdateCheckerService {
       return;
     }
 
-    await this.handleCheckMcpImageUpdates({
-      mcpServerId,
-      skipAutoRestart: true,
+    await this.processMcpServerImageUpdateFollowUp({
+      ...followUpPayload,
+      checkedAt: new Date(),
     });
   }
 
@@ -243,6 +244,86 @@ export class McpImageUpdateCheckerService {
     }
   }
 
+  async processMcpServerImageUpdateFollowUp(
+    params: ProcessMcpServerImageUpdateFollowUpParams,
+  ): Promise<void> {
+    const {
+      attemptCount,
+      checkedAt = new Date(),
+      mcpServerId,
+      rolloutStartedAt,
+      targetImageDigest,
+    } = params;
+    const checkRunId = randomUUID();
+    const lockAcquiredAt = new Date();
+    const lockAcquired = await McpServerImageUpdateCheckLockModel.tryAcquire({
+      mcpServerId,
+      checkRunId,
+      now: lockAcquiredAt,
+      lockedUntil: new Date(
+        lockAcquiredAt.getTime() + IMAGE_UPDATE_CHECK_LOCK_TTL_MS,
+      ),
+    });
+
+    if (!lockAcquired) {
+      logger.info(
+        { mcpServerId, targetImageDigest, attemptCount },
+        "Skipping MCP server image update rollout follow-up because another check is already active",
+      );
+      return;
+    }
+
+    let rolloutState: McpServerImageUpdateState | null = null;
+    try {
+      const state =
+        await McpServerImageUpdateStateModel.findByMcpServerId(mcpServerId);
+      rolloutState = state;
+      if (
+        !state ||
+        !isExpectedRolloutState(state, { targetImageDigest, rolloutStartedAt })
+      ) {
+        logger.info(
+          {
+            mcpServerId,
+            targetImageDigest,
+            rolloutStartedAt,
+            currentStatus: state?.status,
+            currentTargetImageDigest: state?.targetImageDigest,
+            currentRolloutStartedAt: state?.rolloutStartedAt,
+          },
+          "Skipping MCP server image update rollout follow-up because it was superseded",
+        );
+        return;
+      }
+
+      const runningImageDigest = normalizeImageDigest(
+        await this.runtime.getRunningImageDigest(mcpServerId),
+      );
+      await this.persistRolloutVerificationResult({
+        attemptCount,
+        checkedAt,
+        runningImageDigest,
+        state,
+        targetImageDigest,
+      });
+    } catch (error) {
+      await this.handleRolloutVerificationError({
+        attemptCount,
+        checkedAt,
+        error,
+        mcpServerId,
+        rolloutState,
+        rolloutStartedAt,
+        targetImageDigest,
+      });
+    } finally {
+      await McpServerImageUpdateCheckLockModel.release({
+        mcpServerId,
+        checkRunId,
+      });
+    }
+  }
+
   // ===== Protected methods (test exposed) =====
 
   protected getJitterMs(maxJitterMs: number): number {
@@ -258,16 +339,18 @@ export class McpImageUpdateCheckerService {
   }
 
   protected async scheduleImageUpdateFollowUpCheck(
-    mcpServerId: string,
-    scheduledFor: Date,
+    params: ScheduleImageUpdateFollowUpCheckParams,
   ): Promise<void> {
     await taskQueueService.enqueue({
       taskType: "check_mcp_image_update_follow_up",
       payload: {
-        mcpServerId: mcpServerId,
+        attemptCount: params.attemptCount,
+        mcpServerId: params.mcpServerId,
+        rolloutStartedAt: params.rolloutStartedAt.toISOString(),
+        targetImageDigest: params.targetImageDigest,
       },
       maxAttempts: 1,
-      scheduledFor: scheduledFor,
+      scheduledFor: params.scheduledFor,
     });
   }
 
@@ -316,20 +399,6 @@ export class McpImageUpdateCheckerService {
     runningImageDigest: string;
     availableImageDigest: string;
   }): Promise<void> {
-    if (
-      !params.allowAutoRestart ||
-      !params.server.imageUpdateAutoRestartEnabled
-    ) {
-      await this.persistImageUpdateState({
-        mcpServerId: params.server.id,
-        checkedAt: params.checkedAt,
-        runningImageDigest: params.runningImageDigest,
-        availableImageDigest: params.availableImageDigest,
-        status: "update_available",
-      });
-      return;
-    }
-
     const currentServer = await McpServerModel.findById(params.server.id);
     if (!currentServer) {
       logger.warn(
@@ -342,7 +411,26 @@ export class McpImageUpdateCheckerService {
       return;
     }
 
-    if (!currentServer.imageUpdateAutoRestartEnabled) {
+    const currentImageUpdateState =
+      await McpServerImageUpdateStateModel.findByMcpServerId(params.server.id);
+    if (
+      currentImageUpdateState?.status === "reinstalling" &&
+      currentImageUpdateState.targetImageDigest === params.availableImageDigest
+    ) {
+      logger.info(
+        createImageUpdateLogContext({
+          server: currentServer,
+          catalog: params.catalog,
+        }),
+        "Skipping MCP server image update state change because an automatic reinstall is already in progress",
+      );
+      return;
+    }
+
+    if (
+      !params.allowAutoRestart ||
+      !currentServer.imageUpdateAutoRestartEnabled
+    ) {
       await this.persistImageUpdateState({
         mcpServerId: params.server.id,
         checkedAt: params.checkedAt,
@@ -364,6 +452,22 @@ export class McpImageUpdateCheckerService {
       return;
     }
 
+    const activeRollout =
+      await McpServerImageUpdateStateModel.hasActiveRolloutForDigest({
+        mcpServerId: params.server.id,
+        targetImageDigest: params.availableImageDigest,
+      });
+    if (activeRollout) {
+      logger.info(
+        createImageUpdateLogContext({
+          server: currentServer,
+          catalog: params.catalog,
+        }),
+        "Skipping MCP server automatic image reinstall because it is already in progress for this digest",
+      );
+      return;
+    }
+
     const restartAlreadyTriggered =
       await McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
         mcpServerId: params.server.id,
@@ -380,40 +484,210 @@ export class McpImageUpdateCheckerService {
       return;
     }
 
+    const statePersisted = await this.persistImageUpdateState({
+      mcpServerId: params.server.id,
+      checkedAt: params.checkedAt,
+      runningImageDigest: params.runningImageDigest,
+      availableImageDigest: params.availableImageDigest,
+      targetImageDigest: params.availableImageDigest,
+      status: "reinstalling",
+      lastRestartedAt: params.checkedAt,
+      rolloutStartedAt: params.checkedAt,
+      rolloutLastCheckedAt: params.checkedAt,
+      rolloutAttemptCount: 0,
+    });
+    if (!statePersisted) {
+      return;
+    }
+
     await autoReinstallLocalMcpServerAfterImageUpdate({
       server: currentServer,
       catalogItem: params.catalog,
       runningImageDigest: params.runningImageDigest,
       availableImageDigest: params.availableImageDigest,
     });
-    const statePersisted = await this.persistImageUpdateState({
+    await this.scheduleDelayedFollowUpCheck({
+      attemptCount: 1,
       mcpServerId: params.server.id,
-      checkedAt: params.checkedAt,
-      runningImageDigest: params.runningImageDigest,
-      availableImageDigest: params.availableImageDigest,
-      status: "restart_triggered",
-      lastRestartedAt: params.checkedAt,
+      rolloutStartedAt: params.checkedAt,
+      targetImageDigest: params.availableImageDigest,
     });
-    if (statePersisted) {
-      await this.scheduleDelayedFollowUpCheck(params.server.id);
-    }
   }
 
   private async scheduleDelayedFollowUpCheck(
-    mcpServerId: string,
+    params: Omit<ScheduleImageUpdateFollowUpCheckParams, "scheduledFor">,
   ): Promise<void> {
     const scheduledFor = new Date(
-      Date.now() + IMAGE_UPDATE_FOLLOW_UP_CHECK_DELAY_MS,
+      Date.now() + getRolloutFollowUpDelayMs(params.attemptCount),
     );
 
     try {
-      await this.scheduleImageUpdateFollowUpCheck(mcpServerId, scheduledFor);
+      await this.scheduleImageUpdateFollowUpCheck({
+        ...params,
+        scheduledFor,
+      });
     } catch (error) {
       logger.warn(
-        { err: error, mcpServerId, scheduledFor },
+        {
+          err: error,
+          attemptCount: params.attemptCount,
+          mcpServerId: params.mcpServerId,
+          scheduledFor,
+          targetImageDigest: params.targetImageDigest,
+        },
         "Failed to schedule MCP server image update follow-up check",
       );
     }
+  }
+
+  private async persistRolloutVerificationResult(params: {
+    attemptCount: number;
+    checkedAt: Date;
+    runningImageDigest: string | null;
+    state: NonNullable<McpServerImageUpdateState>;
+    targetImageDigest: string;
+  }): Promise<void> {
+    if (params.runningImageDigest === params.targetImageDigest) {
+      await this.persistImageUpdateState({
+        mcpServerId: params.state.mcpServerId,
+        checkedAt: params.checkedAt,
+        runningImageDigest: params.runningImageDigest,
+        availableImageDigest: params.targetImageDigest,
+        targetImageDigest: params.targetImageDigest,
+        status: "up_to_date",
+        lastRestartedAt: params.state.lastRestartedAt,
+        rolloutStartedAt: params.state.rolloutStartedAt,
+        rolloutLastCheckedAt: params.checkedAt,
+        rolloutAttemptCount: params.attemptCount,
+      });
+      logger.info(
+        {
+          attemptCount: params.attemptCount,
+          mcpServerId: params.state.mcpServerId,
+          targetImageDigest: params.targetImageDigest,
+        },
+        "MCP server image update rollout reached target digest",
+      );
+      return;
+    }
+
+    if (params.attemptCount >= MAX_IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_ATTEMPTS) {
+      await McpServerImageUpdateStateModel.recordRolloutFailed({
+        mcpServerId: params.state.mcpServerId,
+        checkedAt: params.checkedAt,
+        runningImageDigest: params.runningImageDigest,
+        targetImageDigest: params.targetImageDigest,
+        rolloutStartedAt: params.state.rolloutStartedAt ?? params.checkedAt,
+        rolloutAttemptCount: params.attemptCount,
+        errorCategory: "rollout_timeout",
+        errorMessage: "Image update rollout did not reach the target digest.",
+      });
+      logger.warn(
+        {
+          attemptCount: params.attemptCount,
+          mcpServerId: params.state.mcpServerId,
+          runningImageDigest: params.runningImageDigest,
+          targetImageDigest: params.targetImageDigest,
+        },
+        "MCP server image update rollout failed to reach target digest",
+      );
+      return;
+    }
+
+    await this.persistImageUpdateState({
+      mcpServerId: params.state.mcpServerId,
+      checkedAt: params.checkedAt,
+      runningImageDigest: params.runningImageDigest,
+      availableImageDigest: params.targetImageDigest,
+      targetImageDigest: params.targetImageDigest,
+      status: "reinstalling",
+      lastRestartedAt: params.state.lastRestartedAt,
+      rolloutStartedAt: params.state.rolloutStartedAt,
+      rolloutLastCheckedAt: params.checkedAt,
+      rolloutAttemptCount: params.attemptCount,
+      lastSuccessfulCheckedAt: params.state.lastSuccessfulCheckedAt,
+    });
+    logger.info(
+      {
+        attemptCount: params.attemptCount,
+        mcpServerId: params.state.mcpServerId,
+        runningImageDigest: params.runningImageDigest,
+        targetImageDigest: params.targetImageDigest,
+      },
+      "MCP server image update rollout is still pending",
+    );
+    await this.scheduleDelayedFollowUpCheck({
+      attemptCount: params.attemptCount + 1,
+      mcpServerId: params.state.mcpServerId,
+      rolloutStartedAt: params.state.rolloutStartedAt ?? params.checkedAt,
+      targetImageDigest: params.targetImageDigest,
+    });
+  }
+
+  private async handleRolloutVerificationError(params: {
+    attemptCount: number;
+    checkedAt: Date;
+    error: unknown;
+    mcpServerId: string;
+    rolloutState: McpServerImageUpdateState | null;
+    rolloutStartedAt: Date;
+    targetImageDigest: string;
+  }): Promise<void> {
+    const failure = getImageUpdateFailure(
+      params.error,
+      "rollout_verification_error",
+    );
+    if (params.attemptCount >= MAX_IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_ATTEMPTS) {
+      await McpServerImageUpdateStateModel.recordRolloutFailed({
+        mcpServerId: params.mcpServerId,
+        checkedAt: params.checkedAt,
+        runningImageDigest: null,
+        targetImageDigest: params.targetImageDigest,
+        rolloutStartedAt: params.rolloutStartedAt,
+        rolloutAttemptCount: params.attemptCount,
+        errorCategory: failure.errorCategory,
+        errorMessage: failure.errorMessage,
+      });
+      logger.warn(
+        {
+          ...getImageUpdateErrorLogFields(params.error),
+          attemptCount: params.attemptCount,
+          mcpServerId: params.mcpServerId,
+          targetImageDigest: params.targetImageDigest,
+        },
+        "MCP server image update rollout verification failed",
+      );
+      return;
+    }
+
+    logger.warn(
+      {
+        ...getImageUpdateErrorLogFields(params.error),
+        attemptCount: params.attemptCount,
+        mcpServerId: params.mcpServerId,
+        targetImageDigest: params.targetImageDigest,
+      },
+      "MCP server image update rollout verification failed; scheduling retry",
+    );
+    await this.persistImageUpdateState({
+      mcpServerId: params.mcpServerId,
+      checkedAt: params.checkedAt,
+      runningImageDigest: null,
+      availableImageDigest: params.targetImageDigest,
+      targetImageDigest: params.targetImageDigest,
+      status: "reinstalling",
+      rolloutStartedAt: params.rolloutStartedAt,
+      rolloutLastCheckedAt: params.checkedAt,
+      rolloutAttemptCount: params.attemptCount,
+      lastSuccessfulCheckedAt:
+        params.rolloutState?.lastSuccessfulCheckedAt ?? null,
+    });
+    await this.scheduleDelayedFollowUpCheck({
+      attemptCount: params.attemptCount + 1,
+      mcpServerId: params.mcpServerId,
+      rolloutStartedAt: params.rolloutStartedAt,
+      targetImageDigest: params.targetImageDigest,
+    });
   }
 
   private async persistImageUpdateState(params: {
@@ -421,20 +695,32 @@ export class McpImageUpdateCheckerService {
     checkedAt: Date;
     runningImageDigest: string | null;
     availableImageDigest: string | null;
+    targetImageDigest?: string | null;
     status: McpServerImageUpdateStatus;
     lastRestartedAt?: Date | null;
+    rolloutStartedAt?: Date | null;
+    rolloutLastCheckedAt?: Date | null;
+    rolloutAttemptCount?: number;
+    lastSuccessfulCheckedAt?: Date | null;
   }): Promise<boolean> {
     const state = {
       mcpServerId: params.mcpServerId,
       lastCheckedAt: params.checkedAt,
       runningImageDigest: params.runningImageDigest,
       availableImageDigest: params.availableImageDigest,
+      targetImageDigest: params.targetImageDigest,
       status: params.status,
-      lastSuccessfulCheckedAt: params.checkedAt,
+      lastSuccessfulCheckedAt:
+        params.lastSuccessfulCheckedAt === undefined
+          ? params.checkedAt
+          : params.lastSuccessfulCheckedAt,
       lastFailedAt: null,
       lastErrorCategory: null,
       lastErrorMessage: null,
       consecutiveFailureCount: 0,
+      rolloutStartedAt: params.rolloutStartedAt,
+      rolloutLastCheckedAt: params.rolloutLastCheckedAt,
+      rolloutAttemptCount: params.rolloutAttemptCount,
     };
 
     const persistedState =
@@ -491,8 +777,10 @@ const DEFAULT_AVAILABLE_DIGEST_TIMEOUT_MS = TimeInMs.Second * 60;
 const DEFAULT_IMAGE_UPDATE_CHECK_CONCURRENCY_LIMIT = 3;
 const DEFAULT_IMAGE_UPDATE_CHECK_MAX_JITTER_MS = 2_000;
 const IMAGE_UPDATE_CHECK_LOCK_TTL_MS = TimeInMs.Minute * 10;
-const IMAGE_UPDATE_FOLLOW_UP_CHECK_DELAY_MS = TimeInMs.Second * 10;
+const IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_INITIAL_DELAY_MS = TimeInMs.Second * 10;
+const IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_MAX_DELAY_MS = TimeInMs.Minute;
 const MAX_IMAGE_UPDATE_CHECK_CONCURRENCY_LIMIT = 5;
+const MAX_IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_ATTEMPTS = 6;
 
 export const mcpImageUpdateCheckerService = new McpImageUpdateCheckerService();
 
@@ -504,9 +792,32 @@ type ProcessMcpServerImageUpdateCheckParams = {
   checkedAt?: Date;
 };
 
+type ProcessMcpServerImageUpdateFollowUpParams = {
+  mcpServerId: string;
+  targetImageDigest: string;
+  rolloutStartedAt: Date;
+  attemptCount: number;
+  checkedAt?: Date;
+};
+
+type ScheduleImageUpdateFollowUpCheckParams = {
+  mcpServerId: string;
+  targetImageDigest: string;
+  rolloutStartedAt: Date;
+  attemptCount: number;
+  scheduledFor: Date;
+};
+
 type CheckMcpImageUpdatesPayload = {
   mcpServerId?: string;
   skipAutoRestart: boolean;
+};
+
+type McpImageUpdateFollowUpPayload = {
+  mcpServerId: string;
+  targetImageDigest: string;
+  rolloutStartedAt: Date;
+  attemptCount: number;
 };
 
 type McpImageUpdateCheckerServiceParams = {
@@ -575,13 +886,42 @@ function parseCheckMcpImageUpdatesPayload(
 
 function parseMcpImageUpdateFollowUpPayload(
   payload: Record<string, unknown>,
-): string | null {
+): McpImageUpdateFollowUpPayload | null {
   const result = z
     .object({
+      attemptCount: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_ATTEMPTS),
       mcpServerId: z.uuid(),
+      rolloutStartedAt: z.coerce.date(),
+      targetImageDigest: z.string().min(1),
     })
     .safeParse(payload);
-  return result.success ? result.data.mcpServerId : null;
+  return result.success ? result.data : null;
+}
+
+function isExpectedRolloutState(
+  state: McpServerImageUpdateState,
+  params: {
+    targetImageDigest: string;
+    rolloutStartedAt: Date;
+  },
+): boolean {
+  return (
+    state.status === "reinstalling" &&
+    state.targetImageDigest === params.targetImageDigest &&
+    state.rolloutStartedAt?.getTime() === params.rolloutStartedAt.getTime()
+  );
+}
+
+function getRolloutFollowUpDelayMs(attemptCount: number): number {
+  const exponent = Math.max(attemptCount - 1, 0);
+  return Math.min(
+    IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_INITIAL_DELAY_MS * 2 ** exponent,
+    IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_MAX_DELAY_MS,
+  );
 }
 
 function createImageUpdateLogContext(params: {

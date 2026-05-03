@@ -14,7 +14,9 @@ export const mcpServerImageUpdateStatusEnum = pgEnum(
     "unknown",
     "up_to_date",
     "update_available",
+    "reinstalling",
     "restart_triggered",
+    "rollout_failed",
     "check_failed",
   ],
 );
@@ -28,10 +30,16 @@ const mcpServerImageUpdateStateTable = pgTable(
     lastCheckedAt: timestamp("last_checked_at", { mode: "date" }),
     runningImageDigest: text("running_image_digest"),
     availableImageDigest: text("available_image_digest"),
+    targetImageDigest: text("target_image_digest"),
     status: mcpServerImageUpdateStatusEnum("status")
       .notNull()
       .default("unknown"),
     lastRestartedAt: timestamp("last_restarted_at", { mode: "date" }),
+    rolloutStartedAt: timestamp("rollout_started_at", { mode: "date" }),
+    rolloutLastCheckedAt: timestamp("rollout_last_checked_at", {
+      mode: "date",
+    }),
+    rolloutAttemptCount: integer("rollout_attempt_count").notNull().default(0),
     lastSuccessfulCheckedAt: timestamp("last_successful_checked_at", {
       mode: "date",
     }),

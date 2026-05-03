@@ -126,7 +126,7 @@ export function McpImageUpdateSettings({
                   />
                 }
               />
-              {server.imageUpdateState?.status === "check_failed" && (
+              {isFailureStatus(server.imageUpdateState?.status) && (
                 <>
                   <ImageUpdateStateItem
                     label="Last failed"
@@ -159,6 +159,10 @@ export function McpImageUpdateSettings({
 
 function UnavailableState({ message }: { message: string }) {
   return <p className="text-sm text-muted-foreground">{message}</p>;
+}
+
+function isFailureStatus(status?: ImageUpdateStatus) {
+  return status === "check_failed" || status === "rollout_failed";
 }
 
 function ImageUpdateSwitch({
@@ -284,10 +288,20 @@ const STATUS_CONFIG = {
     variant: "default",
     className: "bg-amber-600 text-white",
   },
+  reinstalling: {
+    label: "Reinstalling",
+    variant: "default",
+    className: "bg-blue-600 text-white",
+  },
   restart_triggered: {
     label: "Pending",
     variant: "default",
     className: "bg-blue-600 text-white",
+  },
+  rollout_failed: {
+    label: "Rollout failed",
+    variant: "default",
+    className: "bg-destructive text-destructive-foreground",
   },
   check_failed: {
     label: "Check failed",

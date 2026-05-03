@@ -155,7 +155,7 @@ describe("processMcpServerImageUpdateCheck", () => {
     });
   });
 
-  test("reinstalls and persists restart_triggered when digests differ and auto-restart is enabled", async ({
+  test("reinstalls and persists reinstalling rollout state when digests differ and auto-restart is enabled", async ({
     makeInternalMcpCatalog,
     makeMcpServer,
   }) => {
@@ -197,8 +197,11 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableImageDigest: "sha256:new",
     });
     expect(service.scheduleFollowUpCheckMock).toHaveBeenCalledWith({
+      attemptCount: 1,
       mcpServerId: server.id,
+      rolloutStartedAt: CHECKED_AT,
       scheduledFor: expect.any(Date),
+      targetImageDigest: "sha256:new",
     });
     const scheduledFor =
       service.scheduleFollowUpCheckMock.mock.calls[0]?.[0].scheduledFor;
@@ -210,8 +213,12 @@ describe("processMcpServerImageUpdateCheck", () => {
       lastCheckedAt: CHECKED_AT,
       runningImageDigest: "sha256:old",
       availableImageDigest: "sha256:new",
-      status: "restart_triggered",
+      targetImageDigest: "sha256:new",
+      status: "reinstalling",
       lastRestartedAt: CHECKED_AT,
+      rolloutStartedAt: CHECKED_AT,
+      rolloutLastCheckedAt: CHECKED_AT,
+      rolloutAttemptCount: 0,
     });
   });
 
@@ -357,6 +364,266 @@ describe("processMcpServerImageUpdateCheck", () => {
 
     expect(autoReinstallAfterImageUpdateMock).not.toHaveBeenCalled();
     expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
+  });
+
+  test("does not trigger duplicate auto-reinstall while rollout is in progress for the same digest", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    await McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: server.id,
+      lastCheckedAt: new Date("2026-01-01T00:05:00.000Z"),
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      targetImageDigest: "sha256:new",
+      status: "reinstalling",
+      lastRestartedAt: new Date("2026-01-01T00:05:00.000Z"),
+      rolloutStartedAt: new Date("2026-01-01T00:05:00.000Z"),
+      rolloutLastCheckedAt: new Date("2026-01-01T00:05:00.000Z"),
+      rolloutAttemptCount: 1,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const service = new TestMcpImageUpdateCheckerService({
+      runtime,
+    });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(autoReinstallAfterImageUpdateMock).not.toHaveBeenCalled();
+    expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      status: "reinstalling",
+      targetImageDigest: "sha256:new",
+      rolloutAttemptCount: 1,
+    });
+  });
+
+  test("keeps rollout state and schedules retry when follow-up still sees old digest", async ({
+    makeMcpServer,
+  }) => {
+    const server = await makeMcpServer();
+    const rolloutStartedAt = new Date("2026-01-01T00:10:00.000Z");
+    const followUpCheckedAt = new Date("2026-01-01T00:10:10.000Z");
+    await McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: server.id,
+      lastCheckedAt: rolloutStartedAt,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      targetImageDigest: "sha256:new",
+      status: "reinstalling",
+      lastRestartedAt: rolloutStartedAt,
+      rolloutStartedAt,
+      rolloutLastCheckedAt: rolloutStartedAt,
+      rolloutAttemptCount: 0,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const service = new TestMcpImageUpdateCheckerService({ runtime });
+
+    await service.processMcpServerImageUpdateFollowUp({
+      attemptCount: 1,
+      checkedAt: followUpCheckedAt,
+      mcpServerId: server.id,
+      rolloutStartedAt,
+      targetImageDigest: "sha256:new",
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(runtime.getRunningImageDigest).toHaveBeenCalledWith(server.id);
+    expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
+    expect(service.scheduleFollowUpCheckMock).toHaveBeenCalledWith({
+      attemptCount: 2,
+      mcpServerId: server.id,
+      rolloutStartedAt,
+      scheduledFor: expect.any(Date),
+      targetImageDigest: "sha256:new",
+    });
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: followUpCheckedAt,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      targetImageDigest: "sha256:new",
+      status: "reinstalling",
+      rolloutStartedAt,
+      rolloutLastCheckedAt: followUpCheckedAt,
+      rolloutAttemptCount: 1,
+    });
+  });
+
+  test("marks up_to_date when follow-up reaches target digest", async ({
+    makeMcpServer,
+  }) => {
+    const server = await makeMcpServer();
+    const rolloutStartedAt = new Date("2026-01-01T00:10:00.000Z");
+    const followUpCheckedAt = new Date("2026-01-01T00:10:30.000Z");
+    await McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: server.id,
+      lastCheckedAt: rolloutStartedAt,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      targetImageDigest: "sha256:new",
+      status: "reinstalling",
+      lastRestartedAt: rolloutStartedAt,
+      rolloutStartedAt,
+      rolloutLastCheckedAt: rolloutStartedAt,
+      rolloutAttemptCount: 1,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:new",
+      availableDigest: "sha256:new",
+    });
+    const service = new TestMcpImageUpdateCheckerService({ runtime });
+
+    await service.processMcpServerImageUpdateFollowUp({
+      attemptCount: 2,
+      checkedAt: followUpCheckedAt,
+      mcpServerId: server.id,
+      rolloutStartedAt,
+      targetImageDigest: "sha256:new",
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: followUpCheckedAt,
+      runningImageDigest: "sha256:new",
+      availableImageDigest: "sha256:new",
+      targetImageDigest: "sha256:new",
+      status: "up_to_date",
+      lastSuccessfulCheckedAt: followUpCheckedAt,
+      rolloutStartedAt,
+      rolloutLastCheckedAt: followUpCheckedAt,
+      rolloutAttemptCount: 2,
+    });
+  });
+
+  test("marks rollout_failed when follow-up exhausts attempts", async ({
+    makeMcpServer,
+  }) => {
+    const server = await makeMcpServer();
+    const rolloutStartedAt = new Date("2026-01-01T00:10:00.000Z");
+    const followUpCheckedAt = new Date("2026-01-01T00:14:10.000Z");
+    await McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: server.id,
+      lastCheckedAt: rolloutStartedAt,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      targetImageDigest: "sha256:new",
+      status: "reinstalling",
+      lastRestartedAt: rolloutStartedAt,
+      rolloutStartedAt,
+      rolloutLastCheckedAt: rolloutStartedAt,
+      rolloutAttemptCount: 5,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const service = new TestMcpImageUpdateCheckerService({ runtime });
+
+    await service.processMcpServerImageUpdateFollowUp({
+      attemptCount: 6,
+      checkedAt: followUpCheckedAt,
+      mcpServerId: server.id,
+      rolloutStartedAt,
+      targetImageDigest: "sha256:new",
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: followUpCheckedAt,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      targetImageDigest: "sha256:new",
+      status: "rollout_failed",
+      lastFailedAt: followUpCheckedAt,
+      lastErrorCategory: "rollout_timeout",
+      rolloutStartedAt,
+      rolloutLastCheckedAt: followUpCheckedAt,
+      rolloutAttemptCount: 6,
+    });
+  });
+
+  test("skips follow-up when a newer rollout state superseded it", async ({
+    makeMcpServer,
+  }) => {
+    const server = await makeMcpServer();
+    const oldRolloutStartedAt = new Date("2026-01-01T00:10:00.000Z");
+    const newRolloutStartedAt = new Date("2026-01-01T00:12:00.000Z");
+    await McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: server.id,
+      lastCheckedAt: newRolloutStartedAt,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:newer",
+      targetImageDigest: "sha256:newer",
+      status: "reinstalling",
+      lastRestartedAt: newRolloutStartedAt,
+      rolloutStartedAt: newRolloutStartedAt,
+      rolloutLastCheckedAt: newRolloutStartedAt,
+      rolloutAttemptCount: 0,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:new",
+      availableDigest: "sha256:new",
+    });
+    const service = new TestMcpImageUpdateCheckerService({ runtime });
+
+    await service.processMcpServerImageUpdateFollowUp({
+      attemptCount: 1,
+      checkedAt: new Date("2026-01-01T00:12:10.000Z"),
+      mcpServerId: server.id,
+      rolloutStartedAt: oldRolloutStartedAt,
+      targetImageDigest: "sha256:new",
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
+    expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      targetImageDigest: "sha256:newer",
+      status: "reinstalling",
+      rolloutStartedAt: newRolloutStartedAt,
+    });
   });
 
   test("does not let an older follow-up result regress newer up_to_date state", async ({
@@ -910,15 +1177,24 @@ function createRuntime(
 class TestMcpImageUpdateCheckerService extends McpImageUpdateCheckerService {
   readonly scheduleFollowUpCheckMock = vi
     .fn<
-      (params: { mcpServerId: string; scheduledFor: Date }) => Promise<void>
+      (params: {
+        attemptCount: number;
+        mcpServerId: string;
+        rolloutStartedAt: Date;
+        scheduledFor: Date;
+        targetImageDigest: string;
+      }) => Promise<void>
     >()
     .mockResolvedValue(undefined);
 
-  protected override async scheduleImageUpdateFollowUpCheck(
-    mcpServerId: string,
-    scheduledFor: Date,
-  ): Promise<void> {
-    await this.scheduleFollowUpCheckMock({ mcpServerId, scheduledFor });
+  protected override async scheduleImageUpdateFollowUpCheck(params: {
+    attemptCount: number;
+    mcpServerId: string;
+    rolloutStartedAt: Date;
+    scheduledFor: Date;
+    targetImageDigest: string;
+  }): Promise<void> {
+    await this.scheduleFollowUpCheckMock(params);
   }
 }
 

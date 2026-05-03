@@ -268,10 +268,11 @@ describe("handleCheckMcpImageUpdates", () => {
     expect(otherState).toBeNull();
   });
 
-  test("dedicated follow-up path targets one MCP server and skips auto-restart", async ({
+  test("dedicated follow-up path targets one rollout and verifies running digest", async ({
     makeInternalMcpCatalog,
     makeMcpServer,
   }) => {
+    const rolloutStartedAt = new Date("2026-01-01T00:10:00.000Z");
     const targetCatalog = await makeInternalMcpCatalog({
       serverType: "local",
       localConfig: {
@@ -298,8 +299,20 @@ describe("handleCheckMcpImageUpdates", () => {
       imageUpdateAutoRestartEnabled: true,
       localInstallationStatus: "success",
     });
+    await McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: targetServer.id,
+      lastCheckedAt: rolloutStartedAt,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      targetImageDigest: "sha256:new",
+      status: "reinstalling",
+      lastRestartedAt: rolloutStartedAt,
+      rolloutStartedAt,
+      rolloutLastCheckedAt: rolloutStartedAt,
+      rolloutAttemptCount: 0,
+    });
     const runtime = createRuntime({
-      runningDigest: "sha256:old",
+      runningDigest: "sha256:new",
       availableDigest: "sha256:new",
     });
     const service = new McpImageUpdateCheckerService({
@@ -308,7 +321,10 @@ describe("handleCheckMcpImageUpdates", () => {
     });
 
     await service.handleCheckMcpImageUpdateFollowUp({
+      attemptCount: 1,
       mcpServerId: targetServer.id,
+      rolloutStartedAt: rolloutStartedAt.toISOString(),
+      targetImageDigest: "sha256:new",
     });
 
     const targetState = await McpServerImageUpdateStateModel.findByMcpServerId(
@@ -320,9 +336,12 @@ describe("handleCheckMcpImageUpdates", () => {
 
     expect(runtime.getRunningImageDigest).toHaveBeenCalledTimes(1);
     expect(runtime.getRunningImageDigest).toHaveBeenCalledWith(targetServer.id);
+    expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
     expect(targetState).toMatchObject({
       mcpServerId: targetServer.id,
-      status: "update_available",
+      runningImageDigest: "sha256:new",
+      targetImageDigest: "sha256:new",
+      status: "up_to_date",
     });
     expect(otherState).toBeNull();
   });

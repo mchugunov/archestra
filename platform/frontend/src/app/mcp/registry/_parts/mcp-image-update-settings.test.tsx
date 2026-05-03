@@ -38,8 +38,12 @@ describe("McpImageUpdateSettings", () => {
                 "sha256:f89c25ff172c74ebf9e583008301812d63115dfdc550e3b377337b148c6512cb",
               availableImageDigest:
                 "sha256:a0c8fadf9a6431fa6ca145a6b0831c37cd20cb6cdd5ead014c044215d8ce1807",
+              targetImageDigest: null,
               status: "update_available",
               lastRestartedAt: null,
+              rolloutStartedAt: null,
+              rolloutLastCheckedAt: null,
+              rolloutAttemptCount: 0,
               lastSuccessfulCheckedAt: "2026-01-02T03:04:05.000Z",
               lastFailedAt: null,
               lastErrorCategory: null,
@@ -77,8 +81,12 @@ describe("McpImageUpdateSettings", () => {
               lastCheckedAt: null,
               runningImageDigest: null,
               availableImageDigest: null,
+              targetImageDigest: null,
               status: "restart_triggered",
               lastRestartedAt: null,
+              rolloutStartedAt: null,
+              rolloutLastCheckedAt: null,
+              rolloutAttemptCount: 0,
               lastSuccessfulCheckedAt: null,
               lastFailedAt: null,
               lastErrorCategory: null,
@@ -94,6 +102,38 @@ describe("McpImageUpdateSettings", () => {
     expect(screen.getByText("Pending")).toBeInTheDocument();
   });
 
+  it("renders reinstalling rollout status", () => {
+    render(
+      <McpImageUpdateSettings
+        variant="local"
+        installs={[
+          makeServer({
+            imageUpdateState: {
+              mcpServerId: "server-1",
+              lastCheckedAt: "2026-01-02T03:04:05.000Z",
+              runningImageDigest: "sha256:old",
+              availableImageDigest: "sha256:new",
+              targetImageDigest: "sha256:new",
+              status: "reinstalling",
+              lastRestartedAt: "2026-01-02T03:04:05.000Z",
+              rolloutStartedAt: "2026-01-02T03:04:05.000Z",
+              rolloutLastCheckedAt: "2026-01-02T03:04:05.000Z",
+              rolloutAttemptCount: 1,
+              lastSuccessfulCheckedAt: "2026-01-02T03:04:05.000Z",
+              lastFailedAt: null,
+              lastErrorCategory: null,
+              lastErrorMessage: null,
+              consecutiveFailureCount: 0,
+              updatedAt: "2026-01-02T03:04:05.000Z",
+            },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Reinstalling")).toBeInTheDocument();
+  });
+
   it("renders check failure metadata", () => {
     render(
       <McpImageUpdateSettings
@@ -105,8 +145,12 @@ describe("McpImageUpdateSettings", () => {
               lastCheckedAt: "2026-01-02T03:04:05.000Z",
               runningImageDigest: "sha256:old",
               availableImageDigest: "sha256:old",
+              targetImageDigest: null,
               status: "check_failed",
               lastRestartedAt: null,
+              rolloutStartedAt: null,
+              rolloutLastCheckedAt: null,
+              rolloutAttemptCount: 0,
               lastSuccessfulCheckedAt: "2026-01-02T03:00:00.000Z",
               lastFailedAt: "2026-01-02T03:04:05.000Z",
               lastErrorCategory: "available_digest_error",
@@ -126,6 +170,45 @@ describe("McpImageUpdateSettings", () => {
     expect(
       screen.getByText(
         "available_digest_error: Available image digest could not be resolved.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("renders rollout failure metadata", () => {
+    render(
+      <McpImageUpdateSettings
+        variant="local"
+        installs={[
+          makeServer({
+            imageUpdateState: {
+              mcpServerId: "server-1",
+              lastCheckedAt: "2026-01-02T03:14:05.000Z",
+              runningImageDigest: "sha256:old",
+              availableImageDigest: "sha256:new",
+              targetImageDigest: "sha256:new",
+              status: "rollout_failed",
+              lastRestartedAt: "2026-01-02T03:04:05.000Z",
+              rolloutStartedAt: "2026-01-02T03:04:05.000Z",
+              rolloutLastCheckedAt: "2026-01-02T03:14:05.000Z",
+              rolloutAttemptCount: 6,
+              lastSuccessfulCheckedAt: "2026-01-02T03:04:05.000Z",
+              lastFailedAt: "2026-01-02T03:14:05.000Z",
+              lastErrorCategory: "rollout_timeout",
+              lastErrorMessage:
+                "Image update rollout did not reach the target digest.",
+              consecutiveFailureCount: 0,
+              updatedAt: "2026-01-02T03:14:05.000Z",
+            },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Rollout failed")).toBeInTheDocument();
+    expect(screen.getByText("Last failed")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "rollout_timeout: Image update rollout did not reach the target digest.",
       ),
     ).toBeInTheDocument();
   });

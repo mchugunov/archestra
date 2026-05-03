@@ -10,8 +10,12 @@ type UpsertMcpServerImageUpdateStateParams = {
   lastCheckedAt?: Date | null;
   runningImageDigest?: string | null;
   availableImageDigest?: string | null;
+  targetImageDigest?: string | null;
   status?: McpServerImageUpdateStatus;
   lastRestartedAt?: Date | null;
+  rolloutStartedAt?: Date | null;
+  rolloutLastCheckedAt?: Date | null;
+  rolloutAttemptCount?: number;
   lastSuccessfulCheckedAt?: Date | null;
   lastFailedAt?: Date | null;
   lastErrorCategory?: string | null;
@@ -120,6 +124,59 @@ class McpServerImageUpdateStateModel {
     return !!state;
   }
 
+  static async hasActiveRolloutForDigest(params: {
+    mcpServerId: string;
+    targetImageDigest: string;
+  }): Promise<boolean> {
+    const [state] = await db
+      .select({
+        mcpServerId: schema.mcpServerImageUpdateStatesTable.mcpServerId,
+      })
+      .from(schema.mcpServerImageUpdateStatesTable)
+      .where(
+        and(
+          eq(
+            schema.mcpServerImageUpdateStatesTable.mcpServerId,
+            params.mcpServerId,
+          ),
+          eq(
+            schema.mcpServerImageUpdateStatesTable.targetImageDigest,
+            params.targetImageDigest,
+          ),
+          eq(schema.mcpServerImageUpdateStatesTable.status, "reinstalling"),
+        ),
+      )
+      .limit(1);
+
+    return !!state;
+  }
+
+  static async recordRolloutFailed(params: {
+    mcpServerId: string;
+    checkedAt: Date;
+    runningImageDigest: string | null;
+    targetImageDigest: string;
+    rolloutStartedAt: Date;
+    rolloutAttemptCount: number;
+    errorCategory: string;
+    errorMessage: string;
+  }): Promise<McpServerImageUpdateState | null> {
+    return McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: params.mcpServerId,
+      lastCheckedAt: params.checkedAt,
+      runningImageDigest: params.runningImageDigest,
+      availableImageDigest: params.targetImageDigest,
+      targetImageDigest: params.targetImageDigest,
+      status: "rollout_failed",
+      rolloutStartedAt: params.rolloutStartedAt,
+      rolloutLastCheckedAt: params.checkedAt,
+      rolloutAttemptCount: params.rolloutAttemptCount,
+      lastFailedAt: params.checkedAt,
+      lastErrorCategory: params.errorCategory,
+      lastErrorMessage: params.errorMessage,
+    });
+  }
+
   static async recordFailure(
     params: RecordMcpServerImageUpdateFailureParams,
   ): Promise<McpServerImageUpdateState | null> {
@@ -163,34 +220,46 @@ function pickDefinedLeanFields(params: UpsertMcpServerImageUpdateStateParams) {
     typeof schema.mcpServerImageUpdateStatesTable.$inferInsert
   > = {};
 
-  if ("lastCheckedAt" in params) {
+  if (params.lastCheckedAt !== undefined) {
     fields.lastCheckedAt = params.lastCheckedAt;
   }
-  if ("runningImageDigest" in params) {
+  if (params.runningImageDigest !== undefined) {
     fields.runningImageDigest = params.runningImageDigest;
   }
-  if ("availableImageDigest" in params) {
+  if (params.availableImageDigest !== undefined) {
     fields.availableImageDigest = params.availableImageDigest;
   }
-  if ("status" in params) {
+  if (params.targetImageDigest !== undefined) {
+    fields.targetImageDigest = params.targetImageDigest;
+  }
+  if (params.status !== undefined) {
     fields.status = params.status;
   }
-  if ("lastRestartedAt" in params) {
+  if (params.lastRestartedAt !== undefined) {
     fields.lastRestartedAt = params.lastRestartedAt;
   }
-  if ("lastSuccessfulCheckedAt" in params) {
+  if (params.rolloutStartedAt !== undefined) {
+    fields.rolloutStartedAt = params.rolloutStartedAt;
+  }
+  if (params.rolloutLastCheckedAt !== undefined) {
+    fields.rolloutLastCheckedAt = params.rolloutLastCheckedAt;
+  }
+  if (params.rolloutAttemptCount !== undefined) {
+    fields.rolloutAttemptCount = params.rolloutAttemptCount;
+  }
+  if (params.lastSuccessfulCheckedAt !== undefined) {
     fields.lastSuccessfulCheckedAt = params.lastSuccessfulCheckedAt;
   }
-  if ("lastFailedAt" in params) {
+  if (params.lastFailedAt !== undefined) {
     fields.lastFailedAt = params.lastFailedAt;
   }
-  if ("lastErrorCategory" in params) {
+  if (params.lastErrorCategory !== undefined) {
     fields.lastErrorCategory = params.lastErrorCategory;
   }
-  if ("lastErrorMessage" in params) {
+  if (params.lastErrorMessage !== undefined) {
     fields.lastErrorMessage = params.lastErrorMessage;
   }
-  if ("consecutiveFailureCount" in params) {
+  if (params.consecutiveFailureCount !== undefined) {
     fields.consecutiveFailureCount = params.consecutiveFailureCount;
   }
 

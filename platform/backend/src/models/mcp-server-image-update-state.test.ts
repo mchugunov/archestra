@@ -119,6 +119,39 @@ describe("McpServerImageUpdateStateModel", () => {
       });
     });
 
+    test("persists rollout verification metadata", async ({
+      makeMcpServer,
+    }) => {
+      const server = await makeMcpServer();
+      const checkedAt = new Date("2026-01-01T00:10:00.000Z");
+
+      const result = await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: server.id,
+        lastCheckedAt: checkedAt,
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:new",
+        targetImageDigest: "sha256:new",
+        status: "reinstalling",
+        lastRestartedAt: checkedAt,
+        rolloutStartedAt: checkedAt,
+        rolloutLastCheckedAt: checkedAt,
+        rolloutAttemptCount: 1,
+      });
+
+      expect(result).toMatchObject({
+        mcpServerId: server.id,
+        lastCheckedAt: checkedAt,
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:new",
+        targetImageDigest: "sha256:new",
+        status: "reinstalling",
+        lastRestartedAt: checkedAt,
+        rolloutStartedAt: checkedAt,
+        rolloutLastCheckedAt: checkedAt,
+        rolloutAttemptCount: 1,
+      });
+    });
+
     test("does not let an older check overwrite newer state", async ({
       makeMcpServer,
     }) => {
@@ -230,6 +263,89 @@ describe("McpServerImageUpdateStateModel", () => {
           availableImageDigest: "sha256:new",
         }),
       ).resolves.toBe(false);
+    });
+  });
+
+  describe("hasActiveRolloutForDigest", () => {
+    test("returns true only for active rollout state matching the target digest", async ({
+      makeMcpServer,
+    }) => {
+      const activeServer = await makeMcpServer();
+      const inactiveServer = await makeMcpServer();
+      const checkedAt = new Date("2026-01-01T00:10:00.000Z");
+
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: activeServer.id,
+        lastCheckedAt: checkedAt,
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:new",
+        targetImageDigest: "sha256:new",
+        status: "reinstalling",
+        rolloutStartedAt: checkedAt,
+      });
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: inactiveServer.id,
+        lastCheckedAt: checkedAt,
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:new",
+        targetImageDigest: "sha256:new",
+        status: "rollout_failed",
+        rolloutStartedAt: checkedAt,
+      });
+
+      await expect(
+        McpServerImageUpdateStateModel.hasActiveRolloutForDigest({
+          mcpServerId: activeServer.id,
+          targetImageDigest: "sha256:new",
+        }),
+      ).resolves.toBe(true);
+      await expect(
+        McpServerImageUpdateStateModel.hasActiveRolloutForDigest({
+          mcpServerId: activeServer.id,
+          targetImageDigest: "sha256:other",
+        }),
+      ).resolves.toBe(false);
+      await expect(
+        McpServerImageUpdateStateModel.hasActiveRolloutForDigest({
+          mcpServerId: inactiveServer.id,
+          targetImageDigest: "sha256:new",
+        }),
+      ).resolves.toBe(false);
+    });
+  });
+
+  describe("recordRolloutFailed", () => {
+    test("records visible rollout failure metadata", async ({
+      makeMcpServer,
+    }) => {
+      const server = await makeMcpServer();
+      const rolloutStartedAt = new Date("2026-01-01T00:10:00.000Z");
+      const checkedAt = new Date("2026-01-01T00:14:00.000Z");
+
+      const result = await McpServerImageUpdateStateModel.recordRolloutFailed({
+        mcpServerId: server.id,
+        checkedAt,
+        runningImageDigest: "sha256:old",
+        targetImageDigest: "sha256:new",
+        rolloutStartedAt,
+        rolloutAttemptCount: 6,
+        errorCategory: "rollout_timeout",
+        errorMessage: "Image update rollout did not reach the target digest.",
+      });
+
+      expect(result).toMatchObject({
+        mcpServerId: server.id,
+        lastCheckedAt: checkedAt,
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:new",
+        targetImageDigest: "sha256:new",
+        status: "rollout_failed",
+        rolloutStartedAt,
+        rolloutLastCheckedAt: checkedAt,
+        rolloutAttemptCount: 6,
+        lastFailedAt: checkedAt,
+        lastErrorCategory: "rollout_timeout",
+      });
     });
   });
 

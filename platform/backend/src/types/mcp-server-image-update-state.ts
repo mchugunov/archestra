@@ -10,7 +10,9 @@ export const McpServerImageUpdateStatusSchema = z.enum([
   "unknown",
   "up_to_date",
   "update_available",
+  "reinstalling",
   "restart_triggered",
+  "rollout_failed",
   "check_failed",
 ]);
 
