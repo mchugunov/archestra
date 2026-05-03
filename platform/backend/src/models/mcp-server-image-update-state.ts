@@ -128,10 +128,17 @@ class McpServerImageUpdateStateModel {
   static async hasActiveRolloutForDigest(params: {
     mcpServerId: string;
     targetImageDigest: string;
+    checkedAt?: Date;
+    staleAfterMs?: number;
   }): Promise<boolean> {
     const [state] = await db
       .select({
         mcpServerId: schema.mcpServerImageUpdateStatesTable.mcpServerId,
+        lastCheckedAt: schema.mcpServerImageUpdateStatesTable.lastCheckedAt,
+        rolloutStartedAt:
+          schema.mcpServerImageUpdateStatesTable.rolloutStartedAt,
+        rolloutLastCheckedAt:
+          schema.mcpServerImageUpdateStatesTable.rolloutLastCheckedAt,
       })
       .from(schema.mcpServerImageUpdateStatesTable)
       .where(
@@ -148,6 +155,22 @@ class McpServerImageUpdateStateModel {
         ),
       )
       .limit(1);
+
+    if (
+      state &&
+      params.checkedAt instanceof Date &&
+      typeof params.staleAfterMs === "number"
+    ) {
+      const lastRolloutActivityAt =
+        state.rolloutLastCheckedAt ??
+        state.rolloutStartedAt ??
+        state.lastCheckedAt;
+      return (
+        !!lastRolloutActivityAt &&
+        params.checkedAt.getTime() - lastRolloutActivityAt.getTime() <=
+          params.staleAfterMs
+      );
+    }
 
     return !!state;
   }

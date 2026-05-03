@@ -414,9 +414,22 @@ export class McpImageUpdateCheckerService {
     const currentImageUpdateState =
       await McpServerImageUpdateStateModel.findByMcpServerId(params.server.id);
     if (
-      currentImageUpdateState?.status === "reinstalling" &&
-      currentImageUpdateState.targetImageDigest === params.availableImageDigest
+      isRolloutForDigest(currentImageUpdateState, params.availableImageDigest)
     ) {
+      if (
+        isStaleImageUpdateRollout(currentImageUpdateState, params.checkedAt)
+      ) {
+        await this.recordStaleActiveRolloutFailure({
+          state: currentImageUpdateState,
+          checkedAt: params.checkedAt,
+          runningImageDigest: params.runningImageDigest,
+          targetImageDigest: params.availableImageDigest,
+          server: currentServer,
+          catalog: params.catalog,
+        });
+        return;
+      }
+
       logger.info(
         createImageUpdateLogContext({
           server: currentServer,
@@ -456,6 +469,8 @@ export class McpImageUpdateCheckerService {
       await McpServerImageUpdateStateModel.hasActiveRolloutForDigest({
         mcpServerId: params.server.id,
         targetImageDigest: params.availableImageDigest,
+        checkedAt: params.checkedAt,
+        staleAfterMs: IMAGE_UPDATE_ROLLOUT_STALE_AFTER_MS,
       });
     if (activeRollout) {
       logger.info(
@@ -524,6 +539,40 @@ export class McpImageUpdateCheckerService {
       rolloutStartedAt: params.checkedAt,
       targetImageDigest: params.availableImageDigest,
     });
+  }
+
+  private async recordStaleActiveRolloutFailure(params: {
+    state: McpServerImageUpdateState;
+    checkedAt: Date;
+    runningImageDigest: string | null;
+    targetImageDigest: string;
+    server: McpServer;
+    catalog: InternalMcpCatalog;
+  }): Promise<void> {
+    await McpServerImageUpdateStateModel.recordRolloutFailed({
+      mcpServerId: params.state.mcpServerId,
+      checkedAt: params.checkedAt,
+      runningImageDigest: params.runningImageDigest,
+      targetImageDigest: params.targetImageDigest,
+      rolloutStartedAt: params.state.rolloutStartedAt ?? params.checkedAt,
+      rolloutAttemptCount: params.state.rolloutAttemptCount ?? 0,
+      errorCategory: "rollout_stale",
+      errorMessage:
+        "Image update rollout follow-up did not complete before the recovery window.",
+    });
+    logger.warn(
+      {
+        ...createImageUpdateLogContext({
+          server: params.server,
+          catalog: params.catalog,
+        }),
+        rolloutStartedAt: params.state.rolloutStartedAt,
+        rolloutLastCheckedAt: params.state.rolloutLastCheckedAt,
+        rolloutAttemptCount: params.state.rolloutAttemptCount,
+        targetImageDigest: params.targetImageDigest,
+      },
+      "Marked stale MCP server image update rollout as failed",
+    );
   }
 
   private async scheduleDelayedFollowUpCheck(
@@ -793,6 +842,8 @@ const IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_INITIAL_DELAY_MS = TimeInMs.Second * 10;
 const IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_MAX_DELAY_MS = TimeInMs.Minute;
 const MAX_IMAGE_UPDATE_CHECK_CONCURRENCY_LIMIT = 5;
 const MAX_IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_ATTEMPTS = 6;
+const IMAGE_UPDATE_ROLLOUT_STALE_AFTER_MS =
+  IMAGE_UPDATE_CHECK_LOCK_TTL_MS + getMaxRolloutFollowUpDelayMs();
 
 export const mcpImageUpdateCheckerService = new McpImageUpdateCheckerService();
 
@@ -928,12 +979,51 @@ function isExpectedRolloutState(
   );
 }
 
+function isRolloutForDigest(
+  state: McpServerImageUpdateState | null,
+  targetImageDigest: string,
+): state is McpServerImageUpdateState {
+  return (
+    state?.status === "reinstalling" &&
+    state.targetImageDigest === targetImageDigest
+  );
+}
+
+function isStaleImageUpdateRollout(
+  state: McpServerImageUpdateState,
+  checkedAt: Date,
+): boolean {
+  const lastRolloutActivityAt =
+    state.rolloutLastCheckedAt ?? state.rolloutStartedAt ?? state.lastCheckedAt;
+  if (!lastRolloutActivityAt) {
+    return true;
+  }
+
+  return (
+    checkedAt.getTime() - lastRolloutActivityAt.getTime() >
+    IMAGE_UPDATE_ROLLOUT_STALE_AFTER_MS
+  );
+}
+
 function getRolloutFollowUpDelayMs(attemptCount: number): number {
   const exponent = Math.max(attemptCount - 1, 0);
   return Math.min(
     IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_INITIAL_DELAY_MS * 2 ** exponent,
     IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_MAX_DELAY_MS,
   );
+}
+
+function getMaxRolloutFollowUpDelayMs(): number {
+  let totalDelayMs = 0;
+  for (
+    let attemptCount = 1;
+    attemptCount <= MAX_IMAGE_UPDATE_ROLLOUT_FOLLOW_UP_ATTEMPTS;
+    attemptCount += 1
+  ) {
+    totalDelayMs += getRolloutFollowUpDelayMs(attemptCount);
+  }
+
+  return totalDelayMs;
 }
 
 function createImageUpdateLogContext(params: {

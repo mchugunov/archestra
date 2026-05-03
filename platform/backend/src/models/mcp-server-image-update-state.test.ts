@@ -327,6 +327,54 @@ describe("McpServerImageUpdateStateModel", () => {
         }),
       ).resolves.toBe(false);
     });
+
+    test("returns false for stale active rollout when recovery window is provided", async ({
+      makeMcpServer,
+    }) => {
+      const freshServer = await makeMcpServer();
+      const staleServer = await makeMcpServer();
+      const checkedAt = new Date("2026-01-01T00:10:00.000Z");
+      const freshRolloutAt = new Date("2026-01-01T00:07:00.000Z");
+      const staleRolloutAt = new Date("2026-01-01T00:00:00.000Z");
+
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: freshServer.id,
+        lastCheckedAt: freshRolloutAt,
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:new",
+        targetImageDigest: "sha256:new",
+        status: "reinstalling",
+        rolloutStartedAt: freshRolloutAt,
+        rolloutLastCheckedAt: freshRolloutAt,
+      });
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: staleServer.id,
+        lastCheckedAt: staleRolloutAt,
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:new",
+        targetImageDigest: "sha256:new",
+        status: "reinstalling",
+        rolloutStartedAt: staleRolloutAt,
+        rolloutLastCheckedAt: staleRolloutAt,
+      });
+
+      await expect(
+        McpServerImageUpdateStateModel.hasActiveRolloutForDigest({
+          mcpServerId: freshServer.id,
+          targetImageDigest: "sha256:new",
+          checkedAt,
+          staleAfterMs: 5 * 60_000,
+        }),
+      ).resolves.toBe(true);
+      await expect(
+        McpServerImageUpdateStateModel.hasActiveRolloutForDigest({
+          mcpServerId: staleServer.id,
+          targetImageDigest: "sha256:new",
+          checkedAt,
+          staleAfterMs: 5 * 60_000,
+        }),
+      ).resolves.toBe(false);
+    });
   });
 
   describe("recordRolloutFailed", () => {

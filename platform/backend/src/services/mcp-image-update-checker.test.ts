@@ -419,6 +419,88 @@ describe("processMcpServerImageUpdateCheck", () => {
     });
   });
 
+  test("marks stale active rollout failed so a later check can retry", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    const staleRolloutAt = new Date("2025-12-31T23:50:00.000Z");
+    await McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: server.id,
+      lastCheckedAt: staleRolloutAt,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      targetImageDigest: "sha256:new",
+      status: "reinstalling",
+      lastRestartedAt: staleRolloutAt,
+      rolloutStartedAt: staleRolloutAt,
+      rolloutLastCheckedAt: staleRolloutAt,
+      rolloutAttemptCount: 1,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const service = new TestMcpImageUpdateCheckerService({
+      runtime,
+    });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    let state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(autoReinstallAfterImageUpdateMock).not.toHaveBeenCalled();
+    expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: CHECKED_AT,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+      targetImageDigest: "sha256:new",
+      status: "rollout_failed",
+      lastFailedAt: CHECKED_AT,
+      lastErrorCategory: "rollout_stale",
+      rolloutStartedAt: staleRolloutAt,
+      rolloutLastCheckedAt: CHECKED_AT,
+      rolloutAttemptCount: 1,
+    });
+
+    autoReinstallAfterImageUpdateMock.mockClear();
+    const retryService = new TestMcpImageUpdateCheckerService({
+      runtime: createRuntime({
+        runningDigest: "sha256:old",
+        availableDigest: "sha256:new",
+      }),
+    });
+
+    await retryService.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: new Date("2026-01-01T00:11:00.000Z"),
+    });
+
+    state = await McpServerImageUpdateStateModel.findByMcpServerId(server.id);
+    expect(autoReinstallAfterImageUpdateMock).toHaveBeenCalledTimes(1);
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      status: "reinstalling",
+      targetImageDigest: "sha256:new",
+    });
+  });
+
   test("keeps rollout state and schedules retry when follow-up still sees old digest", async ({
     makeMcpServer,
   }) => {
