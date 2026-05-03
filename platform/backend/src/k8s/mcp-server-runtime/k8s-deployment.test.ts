@@ -1,11 +1,6 @@
 import { PassThrough } from "node:stream";
 import type * as k8s from "@kubernetes/client-node";
-import {
-  type Attach,
-  type Exec,
-  type Log,
-  PatchStrategy,
-} from "@kubernetes/client-node";
+import type { Attach, Exec, Log } from "@kubernetes/client-node";
 import type { LocalConfigSchema } from "@shared";
 import { vi } from "vitest";
 import type { z } from "zod";
@@ -3665,74 +3660,6 @@ describe("K8sDeployment.stopDeployment", () => {
     const k8sDeployment = createK8sDeploymentWithMockedApis({}, mockK8sAppsApi);
 
     await expect(k8sDeployment.stopDeployment()).rejects.toEqual(serverError);
-  });
-});
-
-describe("K8sDeployment.rolloutRestartDeployment", () => {
-  function createK8sDeploymentWithMockedAppsApi(
-    mockK8sAppsApi: Partial<k8s.AppsV1Api>,
-  ): K8sDeployment {
-    const mockMcpServer = {
-      id: "test-server-id",
-      name: "test-server",
-      catalogId: "test-catalog-id",
-      secretId: null,
-      ownerId: null,
-      reinstallRequired: false,
-      localInstallationStatus: "idle",
-      localInstallationError: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    } as McpServer;
-
-    return new K8sDeployment({
-      mcpServer: mockMcpServer,
-      k8sApi: {} as k8s.CoreV1Api,
-      k8sAppsApi: mockK8sAppsApi as k8s.AppsV1Api,
-      k8sAttach: {} as Attach,
-      k8sLog: {} as Log,
-      k8sExec: {} as Exec,
-      namespace: "default",
-      catalogItem: null,
-    });
-  }
-
-  test("patches pod template annotation to trigger rollout restart", async () => {
-    const restartedAt = new Date("2026-01-01T00:10:00.000Z");
-    const mockPatchDeployment = vi.fn().mockResolvedValue({});
-    const k8sDeployment = createK8sDeploymentWithMockedAppsApi({
-      patchNamespacedDeployment: mockPatchDeployment,
-    });
-
-    await k8sDeployment.rolloutRestartDeployment(restartedAt);
-
-    expect(mockPatchDeployment).toHaveBeenCalledWith(
-      {
-        name: "mcp-test-server",
-        namespace: "default",
-        body: {
-          spec: {
-            template: {
-              metadata: {
-                annotations: {
-                  "kubectl.kubernetes.io/restartedAt":
-                    restartedAt.toISOString(),
-                },
-              },
-            },
-          },
-        },
-      },
-      expect.objectContaining({ middlewareMergeStrategy: "append" }),
-    );
-
-    const patchOptions = mockPatchDeployment.mock.calls[0]?.[1];
-    const setHeaderParam = vi.fn();
-    await patchOptions.middleware[0].pre({ setHeaderParam }).toPromise();
-    expect(setHeaderParam).toHaveBeenCalledWith(
-      "Content-Type",
-      PatchStrategy.StrategicMergePatch,
-    );
   });
 });
 

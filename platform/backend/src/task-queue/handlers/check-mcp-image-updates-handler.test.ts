@@ -37,7 +37,6 @@ describe("handleCheckMcpImageUpdates", () => {
 
     expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
     expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
-    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
   });
 
   test("processes eligible local MCP servers through the image update checker", async ({
@@ -89,7 +88,6 @@ describe("handleCheckMcpImageUpdates", () => {
       image: "registry.example.com/mcp/eligible:stable",
       options: { timeoutMs: 60_000 },
     });
-    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(eligibleState).toMatchObject({
       mcpServerId: eligibleServer.id,
       status: "up_to_date",
@@ -149,7 +147,6 @@ describe("handleCheckMcpImageUpdates", () => {
 
     expect(runtime.getRunningImageDigest).toHaveBeenCalledTimes(1);
     expect(runtime.getRunningImageDigest).toHaveBeenCalledWith(targetServer.id);
-    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(targetState).toMatchObject({
       mcpServerId: targetServer.id,
       status: "update_available",
@@ -207,7 +204,6 @@ describe("handleCheckMcpImageUpdates", () => {
 
     expect(runtime.getRunningImageDigest).toHaveBeenCalledTimes(1);
     expect(runtime.getRunningImageDigest).toHaveBeenCalledWith(targetServer.id);
-    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(targetState).toMatchObject({
       mcpServerId: targetServer.id,
       status: "update_available",
@@ -244,7 +240,6 @@ describe("handleCheckMcpImageUpdates", () => {
 
     expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
     expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
-    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(state).toBeNull();
   });
 
@@ -422,7 +417,6 @@ function createRuntime(
           params: ResolveAvailableImageDigestRuntimeParams,
         ) => Promise<string | null>
       >(),
-    rolloutRestartServer: vi.fn<(mcpServerId: string) => Promise<void>>(),
   } satisfies ImageUpdateRuntime;
 
   runtime.getRunningImageDigest.mockResolvedValue(
@@ -431,8 +425,6 @@ function createRuntime(
   runtime.resolveAvailableImageDigest.mockResolvedValue(
     options.availableDigest ?? "sha256:available",
   );
-  runtime.rolloutRestartServer.mockResolvedValue(undefined);
-
   return runtime;
 }
 

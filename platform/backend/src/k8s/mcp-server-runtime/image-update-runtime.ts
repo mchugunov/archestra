@@ -14,6 +14,4 @@ export interface ImageUpdateRuntime {
   resolveAvailableImageDigest(
     params: ResolveAvailableImageDigestRuntimeParams,
   ): Promise<string | null>;
-
-  rolloutRestartServer(mcpServerId: string): Promise<void>;
 }

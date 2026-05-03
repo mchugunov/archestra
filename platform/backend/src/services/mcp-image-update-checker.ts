@@ -9,17 +9,14 @@ import {
 import logger from "@/logging";
 import McpServerModel from "@/models/mcp-server";
 import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-state";
+import { autoReinstallLocalMcpServerAfterImageUpdate } from "@/services/mcp-reinstall";
 import { taskQueueService } from "@/task-queue";
-import type {
-  InternalMcpCatalog,
-  McpServer,
-  McpServerImageUpdateStatus,
-} from "@/types";
+import type { McpServer, McpServerImageUpdateStatus } from "@/types";
 
-type EligibleMcpImageUpdateServer = {
-  server: McpServer;
-  catalog: Pick<InternalMcpCatalog, "id" | "name" | "localConfig">;
-};
+type EligibleMcpImageUpdateServer = Awaited<
+  ReturnType<typeof McpServerModel.findLocalServersEligibleForImageUpdateCheck>
+>[number];
+type EligibleMcpImageUpdateCatalog = EligibleMcpImageUpdateServer["catalog"];
 
 type ProcessMcpServerImageUpdateCheckParams = {
   eligibleServer: EligibleMcpImageUpdateServer;
@@ -37,6 +34,13 @@ type ScheduleFollowUpCheckParams = {
   scheduledFor: Date;
 };
 
+type ReinstallAfterImageUpdateParams = {
+  server: McpServer;
+  catalogItem: EligibleMcpImageUpdateCatalog;
+  runningImageDigest: string;
+  availableImageDigest: string;
+};
+
 type McpImageUpdateCheckerServiceParams = {
   runtime?: ImageUpdateRuntime;
   availableDigestTimeoutMs?: number;
@@ -45,6 +49,9 @@ type McpImageUpdateCheckerServiceParams = {
   jitterDelayProvider?: (maxJitterMs: number) => number;
   scheduleFollowUpCheck?: (
     params: ScheduleFollowUpCheckParams,
+  ) => Promise<void>;
+  reinstallAfterImageUpdate?: (
+    params: ReinstallAfterImageUpdateParams,
   ) => Promise<void>;
   sleep?: (ms: number) => Promise<void>;
 };
@@ -58,6 +65,9 @@ export class McpImageUpdateCheckerService {
   private readonly scheduleFollowUpCheck: (
     params: ScheduleFollowUpCheckParams,
   ) => Promise<void>;
+  private readonly reinstallAfterImageUpdate: (
+    params: ReinstallAfterImageUpdateParams,
+  ) => Promise<void>;
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(params: McpImageUpdateCheckerServiceParams = {}) {
@@ -69,6 +79,9 @@ export class McpImageUpdateCheckerService {
     this.runtime = params.runtime ?? McpServerRuntimeManager;
     this.scheduleFollowUpCheck =
       params.scheduleFollowUpCheck ?? scheduleImageUpdateFollowUpCheck;
+    this.reinstallAfterImageUpdate =
+      params.reinstallAfterImageUpdate ??
+      autoReinstallLocalMcpServerAfterImageUpdate;
     this.sleep = params.sleep ?? sleep;
   }
 
@@ -192,6 +205,7 @@ export class McpImageUpdateCheckerService {
       if (runningImageDigest !== availableImageDigest) {
         await this.persistChangedImageState({
           server,
+          catalog,
           allowAutoRestart,
           checkedAt,
           runningImageDigest,
@@ -246,7 +260,7 @@ export class McpImageUpdateCheckerService {
   }
 
   private resolveConfiguredImage(
-    catalog: EligibleMcpImageUpdateServer["catalog"],
+    catalog: Pick<EligibleMcpImageUpdateCatalog, "localConfig">,
   ): string | null {
     const image = catalog.localConfig?.dockerImage?.trim();
     return image || null;
@@ -254,6 +268,7 @@ export class McpImageUpdateCheckerService {
 
   private async persistChangedImageState(params: {
     server: McpServer;
+    catalog: EligibleMcpImageUpdateCatalog;
     allowAutoRestart: boolean;
     checkedAt: Date;
     runningImageDigest: string;
@@ -273,7 +288,12 @@ export class McpImageUpdateCheckerService {
       return;
     }
 
-    await this.runtime.rolloutRestartServer(params.server.id);
+    await this.reinstallAfterImageUpdate({
+      server: params.server,
+      catalogItem: params.catalog,
+      runningImageDigest: params.runningImageDigest,
+      availableImageDigest: params.availableImageDigest,
+    });
     await this.persistImageUpdateState({
       mcpServerId: params.server.id,
       checkedAt: params.checkedAt,
@@ -434,7 +454,7 @@ function sleep(ms: number): Promise<void> {
 
 function createImageUpdateLogContext(params: {
   server: McpServer;
-  catalog: Pick<InternalMcpCatalog, "id" | "name">;
+  catalog: Pick<EligibleMcpImageUpdateCatalog, "id" | "name">;
   image?: string;
   error?: unknown;
 }) {

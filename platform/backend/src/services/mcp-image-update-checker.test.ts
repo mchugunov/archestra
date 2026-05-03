@@ -39,7 +39,6 @@ describe("processMcpServerImageUpdateCheck", () => {
 
     expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
     expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
-    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(state).toMatchObject({
       mcpServerId: server.id,
       lastCheckedAt: CHECKED_AT,
@@ -86,7 +85,6 @@ describe("processMcpServerImageUpdateCheck", () => {
       image,
       options: { timeoutMs: 60_000 },
     });
-    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(state).toMatchObject({
       mcpServerId: server.id,
       lastCheckedAt: CHECKED_AT,
@@ -126,7 +124,6 @@ describe("processMcpServerImageUpdateCheck", () => {
       server.id,
     );
 
-    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(state).toMatchObject({
       mcpServerId: server.id,
       lastCheckedAt: CHECKED_AT,
@@ -136,7 +133,7 @@ describe("processMcpServerImageUpdateCheck", () => {
     });
   });
 
-  test("restarts and persists restart_triggered when digests differ and auto-restart is enabled", async ({
+  test("reinstalls and persists restart_triggered when digests differ and auto-restart is enabled", async ({
     makeInternalMcpCatalog,
     makeMcpServer,
   }) => {
@@ -159,10 +156,12 @@ describe("processMcpServerImageUpdateCheck", () => {
         (params: { mcpServerId: string; scheduledFor: Date }) => Promise<void>
       >()
       .mockResolvedValue(undefined);
+    const reinstallAfterImageUpdate = vi.fn(async (_params: unknown) => {});
 
     const service = new McpImageUpdateCheckerService({
       runtime,
       scheduleFollowUpCheck,
+      reinstallAfterImageUpdate,
     });
     const beforeCheck = Date.now();
 
@@ -175,7 +174,12 @@ describe("processMcpServerImageUpdateCheck", () => {
       server.id,
     );
 
-    expect(runtime.rolloutRestartServer).toHaveBeenCalledWith(server.id);
+    expect(reinstallAfterImageUpdate).toHaveBeenCalledWith({
+      server,
+      catalogItem: catalog,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+    });
     expect(scheduleFollowUpCheck).toHaveBeenCalledWith({
       mcpServerId: server.id,
       scheduledFor: expect.any(Date),
@@ -192,6 +196,58 @@ describe("processMcpServerImageUpdateCheck", () => {
       status: "restart_triggered",
       lastRestartedAt: CHECKED_AT,
     });
+  });
+
+  test("does not persist restart_triggered when image update reinstall fails", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const scheduleFollowUpCheck = vi
+      .fn<
+        (params: { mcpServerId: string; scheduledFor: Date }) => Promise<void>
+      >()
+      .mockResolvedValue(undefined);
+    const reinstallAfterImageUpdate = vi.fn(async (_params: unknown) => {
+      throw new Error("reinstall failed");
+    });
+
+    const service = new McpImageUpdateCheckerService({
+      runtime,
+      scheduleFollowUpCheck,
+      reinstallAfterImageUpdate,
+    });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(reinstallAfterImageUpdate).toHaveBeenCalledWith({
+      server,
+      catalogItem: catalog,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:new",
+    });
+    expect(scheduleFollowUpCheck).not.toHaveBeenCalled();
+    expect(state).toBeNull();
   });
 
   test("persists update_available without restart when auto-restart is skipped by task payload", async ({
@@ -233,7 +289,6 @@ describe("processMcpServerImageUpdateCheck", () => {
       server.id,
     );
 
-    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(scheduleFollowUpCheck).not.toHaveBeenCalled();
     expect(state).toMatchObject({
       mcpServerId: server.id,
@@ -271,7 +326,6 @@ describe("processMcpServerImageUpdateCheck", () => {
 
     expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
     expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
-    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
     expect(state).toBeNull();
   });
 
@@ -391,7 +445,6 @@ function createRuntime(
           params: ResolveAvailableImageDigestRuntimeParams,
         ) => Promise<string | null>
       >(),
-    rolloutRestartServer: vi.fn<(mcpServerId: string) => Promise<void>>(),
   } satisfies ImageUpdateRuntime;
 
   const runningDigest = options.runningDigest ?? "sha256:running";
@@ -407,7 +460,5 @@ function createRuntime(
   } else {
     runtime.resolveAvailableImageDigest.mockResolvedValue(availableDigest);
   }
-  runtime.rolloutRestartServer.mockResolvedValue(undefined);
-
   return runtime;
 }

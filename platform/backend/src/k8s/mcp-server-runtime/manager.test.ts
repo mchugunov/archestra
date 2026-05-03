@@ -76,7 +76,6 @@ const mockCreateDockerRegistrySecrets = vi.fn().mockResolvedValue([]);
 const mockResolveAvailableImageDigest = vi
   .fn()
   .mockResolvedValue("sha256:available");
-const mockRolloutRestartDeployment = vi.fn().mockResolvedValue(undefined);
 const mockResolveHttpEndpoint = vi.fn().mockResolvedValue(undefined);
 const mockK8sDeploymentInstances: Array<{
   options: Record<string, unknown>;
@@ -116,7 +115,6 @@ vi.mock("./k8s-deployment", () => {
       startOrCreateDeployment: ReturnType<typeof vi.fn>;
       createDockerRegistrySecrets: ReturnType<typeof vi.fn>;
       resolveAvailableImageDigest: ReturnType<typeof vi.fn>;
-      rolloutRestartDeployment: ReturnType<typeof vi.fn>;
       resolveHttpEndpoint: ReturnType<typeof vi.fn>;
 
       constructor(options: Record<string, unknown>) {
@@ -125,7 +123,6 @@ vi.mock("./k8s-deployment", () => {
         this.startOrCreateDeployment = mockStartOrCreateDeployment;
         this.createDockerRegistrySecrets = mockCreateDockerRegistrySecrets;
         this.resolveAvailableImageDigest = mockResolveAvailableImageDigest;
-        this.rolloutRestartDeployment = mockRolloutRestartDeployment;
         this.resolveHttpEndpoint = mockResolveHttpEndpoint;
         mockK8sDeploymentInstances.push({
           options,
@@ -1005,60 +1002,6 @@ describe("McpServerRuntimeManager.resolveAvailableImageDigest", () => {
 
     mockLoadFromDefault.mockRestore();
     mockMakeApiClient.mockRestore();
-  });
-});
-
-describe("McpServerRuntimeManager.rolloutRestartServer", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.resetModules();
-  });
-
-  test("cleans up HTTP sessions after triggering deployment rollout restart", async () => {
-    const McpHttpSessionModel = (await import("@/models/mcp-http-session"))
-      .default;
-    const { McpServerRuntimeManager } = await import("./manager");
-    const manager = new McpServerRuntimeManager();
-    const mockDeployment = {
-      rolloutRestartDeployment: mockRolloutRestartDeployment,
-    };
-
-    (
-      manager as unknown as {
-        mcpServerIdToDeploymentMap: Map<string, typeof mockDeployment>;
-      }
-    ).mcpServerIdToDeploymentMap.set("server-1", mockDeployment);
-
-    await manager.rolloutRestartServer("server-1");
-
-    expect(McpHttpSessionModel.deleteByMcpServerId).toHaveBeenCalledWith(
-      "server-1",
-    );
-    expect(mockRolloutRestartDeployment).toHaveBeenCalledTimes(1);
-  });
-
-  test("does not clean up HTTP sessions when deployment rollout restart fails", async () => {
-    const McpHttpSessionModel = (await import("@/models/mcp-http-session"))
-      .default;
-    const { McpServerRuntimeManager } = await import("./manager");
-    const manager = new McpServerRuntimeManager();
-    const restartError = new Error("restart failed");
-    const mockDeployment = {
-      rolloutRestartDeployment: mockRolloutRestartDeployment,
-    };
-
-    mockRolloutRestartDeployment.mockRejectedValueOnce(restartError);
-    (
-      manager as unknown as {
-        mcpServerIdToDeploymentMap: Map<string, typeof mockDeployment>;
-      }
-    ).mcpServerIdToDeploymentMap.set("server-1", mockDeployment);
-
-    await expect(manager.rolloutRestartServer("server-1")).rejects.toThrow(
-      "restart failed",
-    );
-
-    expect(McpHttpSessionModel.deleteByMcpServerId).not.toHaveBeenCalled();
   });
 });
 

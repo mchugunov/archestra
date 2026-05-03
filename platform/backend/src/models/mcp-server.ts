@@ -404,29 +404,13 @@ class McpServerModel {
   ): Promise<
     Array<{
       server: typeof schema.mcpServersTable.$inferSelect;
-      catalog: Pick<
-        typeof schema.internalMcpCatalogTable.$inferSelect,
-        | "id"
-        | "name"
-        | "serverType"
-        | "localConfig"
-        | "deploymentSpecYaml"
-        | "localConfigSecretId"
-      >;
+      catalog: typeof schema.internalMcpCatalogTable.$inferSelect;
     }>
   > {
-    return await db
+    return db
       .select({
         server: schema.mcpServersTable,
-        catalog: {
-          id: schema.internalMcpCatalogTable.id,
-          name: schema.internalMcpCatalogTable.name,
-          serverType: schema.internalMcpCatalogTable.serverType,
-          localConfig: schema.internalMcpCatalogTable.localConfig,
-          deploymentSpecYaml: schema.internalMcpCatalogTable.deploymentSpecYaml,
-          localConfigSecretId:
-            schema.internalMcpCatalogTable.localConfigSecretId,
-        },
+        catalog: schema.internalMcpCatalogTable,
       })
       .from(schema.mcpServersTable)
       .innerJoin(

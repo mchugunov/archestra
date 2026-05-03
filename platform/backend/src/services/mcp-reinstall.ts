@@ -1,7 +1,13 @@
+import type { schema } from "@/database";
 import { McpServerRuntimeManager } from "@/k8s/mcp-server-runtime";
 import logger from "@/logging";
 import { McpServerModel, ToolModel } from "@/models";
 import type { InternalMcpCatalog, LocalConfig, McpServer } from "@/types";
+
+type InternalMcpCatalogRow = typeof schema.internalMcpCatalogTable.$inferSelect;
+type ImageUpdateReinstallCatalogItem =
+  | InternalMcpCatalog
+  | InternalMcpCatalogRow;
 
 /**
  * Checks if a catalog edit requires new user input for reinstallation.
@@ -218,6 +224,71 @@ export async function autoReinstallServer(
   await McpServerModel.update(server.id, {
     reinstallRequired: false,
   });
+}
+
+export async function autoReinstallLocalMcpServerAfterImageUpdate(params: {
+  server: McpServer;
+  catalogItem: ImageUpdateReinstallCatalogItem;
+  runningImageDigest: string;
+  availableImageDigest: string;
+}): Promise<void> {
+  const { availableImageDigest, catalogItem, runningImageDigest, server } =
+    params;
+  const reinstallCatalogItem = toInternalMcpCatalog(catalogItem);
+  const logContext = {
+    mcpServerId: server.id,
+    catalogId: reinstallCatalogItem.id,
+    catalogName: reinstallCatalogItem.name,
+    runningImageDigest,
+    availableImageDigest,
+  };
+
+  logger.info(
+    logContext,
+    "Starting automatic MCP server reinstall after image update",
+  );
+
+  await McpServerModel.update(server.id, {
+    localInstallationStatus: "pending",
+    localInstallationError: null,
+  });
+
+  try {
+    await autoReinstallServer(server, reinstallCatalogItem);
+    await McpServerModel.update(server.id, {
+      localInstallationStatus: "success",
+      localInstallationError: null,
+    });
+    logger.info(
+      logContext,
+      "Automatic MCP server reinstall after image update completed",
+    );
+  } catch (error) {
+    await McpServerModel.update(server.id, {
+      localInstallationStatus: "error",
+      localInstallationError:
+        error instanceof Error ? error.message : "Unknown error",
+    });
+    logger.error(
+      { ...logContext, err: error },
+      "Failed automatic MCP server reinstall after image update",
+    );
+    throw error;
+  }
+}
+
+function toInternalMcpCatalog(
+  catalogItem: ImageUpdateReinstallCatalogItem,
+): InternalMcpCatalog {
+  if ("labels" in catalogItem && "teams" in catalogItem) {
+    return catalogItem;
+  }
+
+  return {
+    ...catalogItem,
+    labels: [],
+    teams: [],
+  };
 }
 
 // ===== Internal helpers =====
