@@ -14,6 +14,13 @@ export const LocalMcpServerInstallationStatusSchema = z.enum(
   LOCAL_MCP_INSTALLATION_STATES,
 );
 
+export type LocalMcpServerInstallationStatus = z.infer<
+  typeof LocalMcpServerInstallationStatusSchema
+>;
+
+export const IMAGE_UPDATE_ELIGIBLE_LOCAL_INSTALLATION_STATUSES: readonly LocalMcpServerInstallationStatus[] =
+  ["success"];
+
 export const SecretStorageTypeSchema = z.enum([
   "vault",
   "external_vault",
@@ -76,10 +83,6 @@ export const UpdateMcpServerSchema = createUpdateSchema(schema.mcpServersTable)
   .extend({
     localInstallationStatus: LocalMcpServerInstallationStatusSchema.optional(),
   });
-
-export type LocalMcpServerInstallationStatus = z.infer<
-  typeof LocalMcpServerInstallationStatusSchema
->;
 
 export type McpServer = z.infer<typeof SelectMcpServerSchema>;
 export type InsertMcpServer = z.infer<typeof InsertMcpServerSchema>;

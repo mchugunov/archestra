@@ -61,11 +61,13 @@ describe("handleCheckMcpImageUpdates", () => {
       catalogId: eligibleCatalog.id,
       serverType: "local",
       imageUpdateCheckEnabled: true,
+      localInstallationStatus: "success",
     });
     const disabledServer = await makeMcpServer({
       catalogId: disabledCatalog.id,
       serverType: "local",
       imageUpdateCheckEnabled: false,
+      localInstallationStatus: "success",
     });
     const runtime = createRuntime({
       runningDigest: "sha256:same",
@@ -111,8 +113,84 @@ describe("handleCheckMcpImageUpdates", () => {
       catalogId: catalog.id,
       serverType: "local",
       imageUpdateCheckEnabled: true,
+      localInstallationStatus: "success",
     });
     await McpServerModel.update(server.id, { reinstallRequired: true });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.handleCheckMcpImageUpdates({});
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
+    expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
+    expect(state).toBeNull();
+  });
+
+  test("ignores local MCP servers that are not successfully installed", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const statuses = ["idle", "pending", "discovering-tools", "error"] as const;
+    const serverIds: string[] = [];
+
+    for (const status of statuses) {
+      const catalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: `registry.example.com/mcp/${status}:stable`,
+        },
+      });
+      const server = await makeMcpServer({
+        catalogId: catalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: true,
+        localInstallationStatus: status,
+      });
+      serverIds.push(server.id);
+    }
+
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.handleCheckMcpImageUpdates({});
+
+    const states = await Promise.all(
+      serverIds.map((serverId) =>
+        McpServerImageUpdateStateModel.findByMcpServerId(serverId),
+      ),
+    );
+
+    expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
+    expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
+    expect(states).toEqual([null, null, null, null]);
+  });
+
+  test("ignores local MCP servers without Docker image config", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: {
+        command: "node",
+      },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      localInstallationStatus: "success",
+    });
     const runtime = createRuntime({
       runningDigest: "sha256:old",
       availableDigest: "sha256:new",
@@ -151,12 +229,14 @@ describe("handleCheckMcpImageUpdates", () => {
       serverType: "local",
       imageUpdateCheckEnabled: true,
       imageUpdateAutoRestartEnabled: true,
+      localInstallationStatus: "success",
     });
     const otherServer = await makeMcpServer({
       catalogId: otherCatalog.id,
       serverType: "local",
       imageUpdateCheckEnabled: true,
       imageUpdateAutoRestartEnabled: true,
+      localInstallationStatus: "success",
     });
     const runtime = createRuntime({
       runningDigest: "sha256:old",
@@ -209,12 +289,14 @@ describe("handleCheckMcpImageUpdates", () => {
       serverType: "local",
       imageUpdateCheckEnabled: true,
       imageUpdateAutoRestartEnabled: true,
+      localInstallationStatus: "success",
     });
     const otherServer = await makeMcpServer({
       catalogId: otherCatalog.id,
       serverType: "local",
       imageUpdateCheckEnabled: true,
       imageUpdateAutoRestartEnabled: true,
+      localInstallationStatus: "success",
     });
     const runtime = createRuntime({
       runningDigest: "sha256:old",
@@ -259,6 +341,7 @@ describe("handleCheckMcpImageUpdates", () => {
       catalogId: catalog.id,
       serverType: "local",
       imageUpdateCheckEnabled: true,
+      localInstallationStatus: "success",
     });
     const runtime = createRuntime();
     const service = new McpImageUpdateCheckerService({ runtime });
@@ -297,11 +380,13 @@ describe("handleCheckMcpImageUpdates", () => {
       catalogId: failingCatalog.id,
       serverType: "local",
       imageUpdateCheckEnabled: true,
+      localInstallationStatus: "success",
     });
     const successfulServer = await makeMcpServer({
       catalogId: successfulCatalog.id,
       serverType: "local",
       imageUpdateCheckEnabled: true,
+      localInstallationStatus: "success",
     });
     const runtime = createRuntime();
     runtime.getRunningImageDigest.mockImplementation(async (mcpServerId) => {
@@ -362,6 +447,7 @@ describe("handleCheckMcpImageUpdates", () => {
         catalogId: catalog.id,
         serverType: "local",
         imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
       });
     }
     const runtime = createRuntime();
@@ -421,6 +507,7 @@ describe("handleCheckMcpImageUpdates", () => {
       catalogId: catalog.id,
       serverType: "local",
       imageUpdateCheckEnabled: true,
+      localInstallationStatus: "success",
     });
     const runtime = createRuntime({
       runningDigest: "sha256:same",

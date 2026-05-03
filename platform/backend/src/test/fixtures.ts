@@ -490,6 +490,7 @@ async function makeMcpServer(
       | "teamId"
       | "scope"
       | "serverType"
+      | "localInstallationStatus"
       | "imageUpdateCheckEnabled"
       | "imageUpdateAutoRestartEnabled"
     >

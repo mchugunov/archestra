@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import mcpClient from "@/clients/mcp-client";
 import db, { schema } from "@/database";
@@ -13,6 +13,7 @@ import type {
   ResourceVisibilityScope,
   UpdateMcpServer,
 } from "@/types";
+import { IMAGE_UPDATE_ELIGIBLE_LOCAL_INSTALLATION_STATUSES } from "@/types";
 import AgentToolModel from "./agent-tool";
 import InternalMcpCatalogModel from "./internal-mcp-catalog";
 import McpHttpSessionModel from "./mcp-http-session";
@@ -424,6 +425,12 @@ class McpServerModel {
           eq(schema.internalMcpCatalogTable.serverType, "local"),
           eq(schema.mcpServersTable.imageUpdateCheckEnabled, true),
           eq(schema.mcpServersTable.reinstallRequired, false),
+          inArray(
+            schema.mcpServersTable.localInstallationStatus,
+            IMAGE_UPDATE_ELIGIBLE_LOCAL_INSTALLATION_STATUSES,
+          ),
+          sql`${schema.internalMcpCatalogTable.localConfig}->>'dockerImage' IS NOT NULL`,
+          sql`btrim(${schema.internalMcpCatalogTable.localConfig}->>'dockerImage') <> ''`,
           ...(mcpServerId ? [eq(schema.mcpServersTable.id, mcpServerId)] : []),
         ),
       );

@@ -126,6 +126,12 @@ describe("McpServerModel", () => {
           dockerImage: "localhost:5001/reinstall-required-server:latest",
         },
       });
+      const nonDockerLocalCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          command: "node",
+        },
+      });
       const remoteCatalog = await makeInternalMcpCatalog({
         serverType: "remote",
         serverUrl: "https://remote.example.com/mcp",
@@ -135,24 +141,34 @@ describe("McpServerModel", () => {
         catalogId: enabledLocalCatalog.id,
         serverType: "local",
         imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
       });
       const disabledLocalServer = await makeMcpServer({
         catalogId: disabledLocalCatalog.id,
         serverType: "local",
         imageUpdateCheckEnabled: false,
+        localInstallationStatus: "success",
       });
       const reinstallRequiredLocalServer = await makeMcpServer({
         catalogId: reinstallRequiredLocalCatalog.id,
         serverType: "local",
         imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
       });
       await McpServerModel.update(reinstallRequiredLocalServer.id, {
         reinstallRequired: true,
+      });
+      const nonDockerLocalServer = await makeMcpServer({
+        catalogId: nonDockerLocalCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
       });
       const remoteServer = await makeMcpServer({
         catalogId: remoteCatalog.id,
         serverType: "remote",
         imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
       });
 
       const results =
@@ -179,6 +195,9 @@ describe("McpServerModel", () => {
           ({ server }) => server.id === reinstallRequiredLocalServer.id,
         ),
       ).toBe(false);
+      expect(
+        results.some(({ server }) => server.id === nonDockerLocalServer.id),
+      ).toBe(false);
       expect(results.some(({ server }) => server.id === remoteServer.id)).toBe(
         false,
       );
@@ -204,11 +223,13 @@ describe("McpServerModel", () => {
         catalogId: firstCatalog.id,
         serverType: "local",
         imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
       });
       await makeMcpServer({
         catalogId: secondCatalog.id,
         serverType: "local",
         imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
       });
 
       const results =
@@ -223,6 +244,64 @@ describe("McpServerModel", () => {
           dockerImage: "localhost:5001/first-server:latest",
         },
       });
+    });
+
+    test("only returns local servers with successful installation status", async ({
+      makeInternalMcpCatalog,
+      makeMcpServer,
+    }) => {
+      const statuses = [
+        "idle",
+        "pending",
+        "discovering-tools",
+        "success",
+        "error",
+      ] as const;
+      const serverIdsByStatus = new Map<string, string>();
+
+      for (const status of statuses) {
+        const catalog = await makeInternalMcpCatalog({
+          serverType: "local",
+          localConfig: {
+            dockerImage: `localhost:5001/${status}:latest`,
+          },
+        });
+        const server = await makeMcpServer({
+          catalogId: catalog.id,
+          serverType: "local",
+          imageUpdateCheckEnabled: true,
+          localInstallationStatus: status,
+        });
+        serverIdsByStatus.set(status, server.id);
+      }
+
+      const results =
+        await McpServerModel.findLocalServersEligibleForImageUpdateCheck();
+
+      expect(results.map(({ server }) => server.id)).toEqual([
+        serverIdsByStatus.get("success"),
+      ]);
+      expect(
+        results.some(
+          ({ server }) => server.id === serverIdsByStatus.get("pending"),
+        ),
+      ).toBe(false);
+      expect(
+        results.some(
+          ({ server }) =>
+            server.id === serverIdsByStatus.get("discovering-tools"),
+        ),
+      ).toBe(false);
+      expect(
+        results.some(
+          ({ server }) => server.id === serverIdsByStatus.get("error"),
+        ),
+      ).toBe(false);
+      expect(
+        results.some(
+          ({ server }) => server.id === serverIdsByStatus.get("idle"),
+        ),
+      ).toBe(false);
     });
   });
 

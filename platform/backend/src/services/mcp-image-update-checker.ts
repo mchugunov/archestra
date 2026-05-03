@@ -197,6 +197,9 @@ export class McpImageUpdateCheckerService {
       }
 
       if (runningImageDigest !== availableImageDigest) {
+        if (allowAutoRestart && server.imageUpdateAutoRestartEnabled) {
+          failureCategory = "reinstall_failed";
+        }
         await this.persistChangedImageState({
           server,
           catalog,
