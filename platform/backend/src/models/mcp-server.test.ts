@@ -5,6 +5,35 @@ import McpServerImageUpdateStateModel from "./mcp-server-image-update-state";
 import McpServerUserModel from "./mcp-server-user";
 
 describe("McpServerModel", () => {
+  describe("image update defaults", () => {
+    test("new MCP server rows default image update checks and auto-restart to enabled", async ({
+      makeInternalMcpCatalog,
+    }) => {
+      const catalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/defaults-server:latest",
+        },
+      });
+
+      const [server] = await db
+        .insert(schema.mcpServersTable)
+        .values({
+          name: "Defaults Server",
+          catalogId: catalog.id,
+          serverType: "local",
+        })
+        .returning();
+
+      expect(server.imageUpdateCheckEnabled).toBe(true);
+      expect(server.imageUpdateAutoRestartEnabled).toBe(true);
+
+      const foundServer = await McpServerModel.findById(server.id);
+      expect(foundServer?.imageUpdateCheckEnabled).toBe(true);
+      expect(foundServer?.imageUpdateAutoRestartEnabled).toBe(true);
+    });
+  });
+
   describe("serverType field", () => {
     test("MCP servers store serverType correctly including builtin", async ({
       makeInternalMcpCatalog,

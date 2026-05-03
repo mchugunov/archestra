@@ -384,12 +384,10 @@ export function useUpdateMcpServerImageUpdateSettings() {
       queryClient.invalidateQueries({
         queryKey: ["mcp-servers", variables.id],
       });
-      toast.success(`Updated image update settings for ${result.name}`);
+      toast.success(`Successfully updated image freshness settings`);
     },
-    onError: (_error, variables) => {
-      toast.error(
-        `Failed to update image update settings for ${variables.name}`,
-      );
+    onError: (_error, _variables) => {
+      toast.error(`Failed to update image freshness settings`);
     },
   });
 }
