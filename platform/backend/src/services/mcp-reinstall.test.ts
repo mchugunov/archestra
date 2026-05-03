@@ -663,7 +663,7 @@ describe("mcp-reinstall", () => {
       const catalog = createCatalog({ serverType: "local" });
 
       vi.mocked(McpServerRuntimeManager.restartServer).mockRejectedValue(
-        new Error("K8s deployment failed"),
+        new Error("K8s deployment failed token=super-secret-value"),
       );
 
       await expect(autoReinstallServer(server, catalog)).rejects.toThrow(
@@ -1082,7 +1082,7 @@ describe("mcp-reinstall", () => {
       const catalog = createCatalog({ serverType: "local" });
 
       vi.mocked(McpServerRuntimeManager.restartServer).mockRejectedValue(
-        new Error("K8s deployment failed"),
+        new Error("K8s deployment failed token=super-secret-value"),
       );
       vi.mocked(McpServerModel.update).mockResolvedValue({} as McpServer);
 
@@ -1093,7 +1093,7 @@ describe("mcp-reinstall", () => {
           runningImageDigest: "sha256:old",
           availableImageDigest: "sha256:new",
         }),
-      ).rejects.toThrow("K8s deployment failed");
+      ).rejects.toThrow("K8s deployment failed token=super-secret-value");
 
       expect(McpServerModel.update).toHaveBeenNthCalledWith(1, server.id, {
         localInstallationStatus: "pending",
@@ -1101,7 +1101,7 @@ describe("mcp-reinstall", () => {
       });
       expect(McpServerModel.update).toHaveBeenLastCalledWith(server.id, {
         localInstallationStatus: "error",
-        localInstallationError: "K8s deployment failed",
+        localInstallationError: "K8s deployment failed token=[redacted]",
       });
       expect(ToolModel.syncToolsForCatalog).not.toHaveBeenCalled();
     });

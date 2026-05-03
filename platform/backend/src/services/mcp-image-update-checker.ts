@@ -13,6 +13,10 @@ import McpServerModel, {
 } from "@/models/mcp-server";
 import McpServerImageUpdateCheckLockModel from "@/models/mcp-server-image-update-check-lock";
 import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-state";
+import {
+  getImageUpdateErrorLogFields,
+  getImageUpdateFailure,
+} from "@/services/mcp-image-update-error";
 import { autoReinstallLocalMcpServerAfterImageUpdate } from "@/services/mcp-reinstall";
 import { taskQueueService } from "@/task-queue";
 import type {
@@ -121,9 +125,16 @@ export class McpImageUpdateCheckerService {
     }
 
     let image: string | null = null;
+    let failureCategory = "check_failed";
     try {
       image = this.resolveConfiguredImage(catalog);
       if (!image) {
+        await this.persistImageUpdateFailure({
+          mcpServerId: server.id,
+          checkedAt,
+          errorCategory: "missing_configured_image",
+          errorMessage: "No Docker image is configured for this MCP server.",
+        });
         logger.warn(
           createImageUpdateLogContext({ server, catalog }),
           "Skipping MCP server image update check because no configured image was found",
@@ -143,10 +154,17 @@ export class McpImageUpdateCheckerService {
         return;
       }
 
+      failureCategory = "running_digest_error";
       const runningImageDigest = normalizeImageDigest(
         await this.runtime.getRunningImageDigest(server.id),
       );
       if (!runningImageDigest) {
+        await this.persistImageUpdateFailure({
+          mcpServerId: server.id,
+          checkedAt,
+          errorCategory: "running_digest_unavailable",
+          errorMessage: "Running image digest could not be resolved.",
+        });
         logger.warn(
           createImageUpdateLogContext({ server, catalog, image }),
           "Skipping MCP server image update state persistence because running image digest could not be resolved",
@@ -154,6 +172,7 @@ export class McpImageUpdateCheckerService {
         return;
       }
 
+      failureCategory = "available_digest_error";
       const availableImageDigest = normalizeImageDigest(
         await this.runtime.resolveAvailableImageDigest({
           mcpServerId: server.id,
@@ -164,6 +183,12 @@ export class McpImageUpdateCheckerService {
         }),
       );
       if (!availableImageDigest) {
+        await this.persistImageUpdateFailure({
+          mcpServerId: server.id,
+          checkedAt,
+          errorCategory: "available_digest_unavailable",
+          errorMessage: "Available image digest could not be resolved.",
+        });
         logger.warn(
           createImageUpdateLogContext({ server, catalog, image }),
           "Skipping MCP server image update state persistence because available image digest could not be resolved",
@@ -191,8 +216,15 @@ export class McpImageUpdateCheckerService {
         status: "up_to_date",
       });
     } catch (error) {
+      const failure = getImageUpdateFailure(error, failureCategory);
+      await this.persistImageUpdateFailure({
+        mcpServerId: server.id,
+        checkedAt,
+        errorCategory: failure.errorCategory,
+        errorMessage: failure.errorMessage,
+      });
       logger.warn(
-          createImageUpdateLogContext({
+        createImageUpdateLogContext({
           server,
           catalog,
           image: image ?? undefined,
@@ -395,6 +427,11 @@ export class McpImageUpdateCheckerService {
       runningImageDigest: params.runningImageDigest,
       availableImageDigest: params.availableImageDigest,
       status: params.status,
+      lastSuccessfulCheckedAt: params.checkedAt,
+      lastFailedAt: null,
+      lastErrorCategory: null,
+      lastErrorMessage: null,
+      consecutiveFailureCount: 0,
     };
 
     const persistedState =
@@ -415,6 +452,30 @@ export class McpImageUpdateCheckerService {
           status: params.status,
         },
         "Skipping stale MCP server image update state write",
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  private async persistImageUpdateFailure(params: {
+    mcpServerId: string;
+    checkedAt: Date;
+    errorCategory: string;
+    errorMessage: string;
+  }): Promise<boolean> {
+    const persistedState =
+      await McpServerImageUpdateStateModel.recordFailure(params);
+
+    if (!persistedState) {
+      logger.info(
+        {
+          mcpServerId: params.mcpServerId,
+          checkedAt: params.checkedAt,
+          errorCategory: params.errorCategory,
+        },
+        "Skipping stale MCP server image update failure state write",
       );
       return false;
     }
@@ -526,29 +587,16 @@ function createImageUpdateLogContext(params: {
   image?: string;
   error?: unknown;
 }) {
+  const errorFields =
+    params.error === undefined
+      ? {}
+      : getImageUpdateErrorLogFields(params.error);
+
   return {
-    ...(params.error === undefined ? {} : { err: params.error }),
     mcpServerId: params.server.id,
     catalogId: params.catalog.id,
     catalogName: params.catalog.name,
     ...(params.image ? { image: params.image } : {}),
-    ...(params.error === undefined ? {} : getErrorLogFields(params.error)),
-  };
-}
-
-function getErrorLogFields(error: unknown): {
-  errorClass: string;
-  errorMessage: string;
-} {
-  if (error instanceof Error) {
-    return {
-      errorClass: error.name || error.constructor.name,
-      errorMessage: error.message,
-    };
-  }
-
-  return {
-    errorClass: typeof error,
-    errorMessage: String(error),
+    ...errorFields,
   };
 }

@@ -75,6 +75,7 @@ describe("McpServerImageUpdateStateModel", () => {
         availableImageDigest: "sha256:available",
         status: "update_available",
         lastRestartedAt: null,
+        consecutiveFailureCount: 0,
       });
     });
 
@@ -114,6 +115,7 @@ describe("McpServerImageUpdateStateModel", () => {
         availableImageDigest: "sha256:new",
         status: "restart_triggered",
         lastRestartedAt,
+        consecutiveFailureCount: 0,
       });
     });
 
@@ -228,6 +230,88 @@ describe("McpServerImageUpdateStateModel", () => {
           availableImageDigest: "sha256:new",
         }),
       ).resolves.toBe(false);
+    });
+  });
+
+  describe("recordFailure", () => {
+    test("creates failed state with safe failure metadata", async ({
+      makeMcpServer,
+    }) => {
+      const server = await makeMcpServer();
+      const checkedAt = new Date("2026-01-01T00:10:00.000Z");
+
+      const result = await McpServerImageUpdateStateModel.recordFailure({
+        mcpServerId: server.id,
+        checkedAt,
+        errorCategory: "available_digest_error",
+        errorMessage: "Available image digest could not be resolved.",
+      });
+
+      expect(result).toMatchObject({
+        mcpServerId: server.id,
+        lastCheckedAt: checkedAt,
+        status: "check_failed",
+        lastFailedAt: checkedAt,
+        lastErrorCategory: "available_digest_error",
+        lastErrorMessage: "Available image digest could not be resolved.",
+        consecutiveFailureCount: 1,
+      });
+    });
+
+    test("increments consecutive failure count", async ({ makeMcpServer }) => {
+      const server = await makeMcpServer();
+
+      await McpServerImageUpdateStateModel.recordFailure({
+        mcpServerId: server.id,
+        checkedAt: new Date("2026-01-01T00:10:00.000Z"),
+        errorCategory: "running_digest_error",
+        errorMessage: "Running image digest could not be resolved.",
+      });
+      const result = await McpServerImageUpdateStateModel.recordFailure({
+        mcpServerId: server.id,
+        checkedAt: new Date("2026-01-01T00:11:00.000Z"),
+        errorCategory: "available_digest_error",
+        errorMessage: "Available image digest could not be resolved.",
+      });
+
+      expect(result).toMatchObject({
+        status: "check_failed",
+        lastErrorCategory: "available_digest_error",
+        consecutiveFailureCount: 2,
+      });
+    });
+
+    test("does not let older failure overwrite newer successful state", async ({
+      makeMcpServer,
+    }) => {
+      const server = await makeMcpServer();
+      const newerCheckedAt = new Date("2026-01-01T00:20:00.000Z");
+
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: server.id,
+        lastCheckedAt: newerCheckedAt,
+        runningImageDigest: "sha256:new",
+        availableImageDigest: "sha256:new",
+        status: "up_to_date",
+      });
+      const staleResult = await McpServerImageUpdateStateModel.recordFailure({
+        mcpServerId: server.id,
+        checkedAt: new Date("2026-01-01T00:10:00.000Z"),
+        errorCategory: "available_digest_error",
+        errorMessage: "Available image digest could not be resolved.",
+      });
+
+      const result = await McpServerImageUpdateStateModel.findByMcpServerId(
+        server.id,
+      );
+
+      expect(staleResult).toBeNull();
+      expect(result).toMatchObject({
+        mcpServerId: server.id,
+        lastCheckedAt: newerCheckedAt,
+        status: "up_to_date",
+        consecutiveFailureCount: 0,
+      });
     });
   });
 });

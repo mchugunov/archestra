@@ -1,4 +1,4 @@
-CREATE TYPE "public"."mcp_server_image_update_status" AS ENUM('unknown', 'up_to_date', 'update_available', 'restart_triggered');--> statement-breakpoint
+CREATE TYPE "public"."mcp_server_image_update_status" AS ENUM('unknown', 'up_to_date', 'update_available', 'restart_triggered', 'check_failed');--> statement-breakpoint
 CREATE TABLE "mcp_server_image_update_state" (
 	"mcp_server_id" uuid PRIMARY KEY NOT NULL,
 	"last_checked_at" timestamp,
@@ -6,6 +6,11 @@ CREATE TABLE "mcp_server_image_update_state" (
 	"available_image_digest" text,
 	"status" "mcp_server_image_update_status" DEFAULT 'unknown' NOT NULL,
 	"last_restarted_at" timestamp,
+	"last_successful_checked_at" timestamp,
+	"last_failed_at" timestamp,
+	"last_error_category" text,
+	"last_error_message" text,
+	"consecutive_failure_count" integer DEFAULT 0 NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint

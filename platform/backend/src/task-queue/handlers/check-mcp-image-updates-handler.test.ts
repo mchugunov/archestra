@@ -334,7 +334,13 @@ describe("handleCheckMcpImageUpdates", () => {
     expect(runtime.getRunningImageDigest).toHaveBeenCalledWith(
       successfulServer.id,
     );
-    expect(failingState).toBeNull();
+    expect(failingState).toMatchObject({
+      mcpServerId: failingServer.id,
+      status: "check_failed",
+      lastErrorCategory: "running_digest_error",
+      lastErrorMessage: "registry unavailable",
+      consecutiveFailureCount: 1,
+    });
     expect(successfulState).toMatchObject({
       mcpServerId: successfulServer.id,
       status: "up_to_date",

@@ -11,6 +11,7 @@ export const McpServerImageUpdateStatusSchema = z.enum([
   "up_to_date",
   "update_available",
   "restart_triggered",
+  "check_failed",
 ]);
 
 const imageUpdateStateExtendedFields = {

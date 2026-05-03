@@ -40,6 +40,11 @@ describe("McpImageUpdateSettings", () => {
                 "sha256:a0c8fadf9a6431fa6ca145a6b0831c37cd20cb6cdd5ead014c044215d8ce1807",
               status: "update_available",
               lastRestartedAt: null,
+              lastSuccessfulCheckedAt: "2026-01-02T03:04:05.000Z",
+              lastFailedAt: null,
+              lastErrorCategory: null,
+              lastErrorMessage: null,
+              consecutiveFailureCount: 0,
               updatedAt: "2026-01-02T03:04:05.000Z",
             },
           }),
@@ -54,6 +59,7 @@ describe("McpImageUpdateSettings", () => {
       screen.getByRole("switch", { name: "Enable auto-reinstall" }),
     ).not.toBeChecked();
     expect(screen.getByText("Update available")).toBeInTheDocument();
+    expect(screen.getByText("Last successful")).toBeInTheDocument();
     expect(screen.getByText("Last reinstalled")).toBeInTheDocument();
     expect(screen.getByText("sha256:f89c25ff172c")).toBeInTheDocument();
     expect(screen.getByText("sha256:a0c8fadf9a64")).toBeInTheDocument();
@@ -73,6 +79,11 @@ describe("McpImageUpdateSettings", () => {
               availableImageDigest: null,
               status: "restart_triggered",
               lastRestartedAt: null,
+              lastSuccessfulCheckedAt: null,
+              lastFailedAt: null,
+              lastErrorCategory: null,
+              lastErrorMessage: null,
+              consecutiveFailureCount: 0,
               updatedAt: "2026-01-02T03:04:05.000Z",
             },
           }),
@@ -81,6 +92,42 @@ describe("McpImageUpdateSettings", () => {
     );
 
     expect(screen.getByText("Pending")).toBeInTheDocument();
+  });
+
+  it("renders check failure metadata", () => {
+    render(
+      <McpImageUpdateSettings
+        variant="local"
+        installs={[
+          makeServer({
+            imageUpdateState: {
+              mcpServerId: "server-1",
+              lastCheckedAt: "2026-01-02T03:04:05.000Z",
+              runningImageDigest: "sha256:old",
+              availableImageDigest: "sha256:old",
+              status: "check_failed",
+              lastRestartedAt: null,
+              lastSuccessfulCheckedAt: "2026-01-02T03:00:00.000Z",
+              lastFailedAt: "2026-01-02T03:04:05.000Z",
+              lastErrorCategory: "available_digest_error",
+              lastErrorMessage: "Available image digest could not be resolved.",
+              consecutiveFailureCount: 2,
+              updatedAt: "2026-01-02T03:04:05.000Z",
+            },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Check failed")).toBeInTheDocument();
+    expect(screen.getByText("Last failed")).toBeInTheDocument();
+    expect(screen.getByText("Consecutive failures")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "available_digest_error: Available image digest could not be resolved.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows unavailable state for remote servers", () => {

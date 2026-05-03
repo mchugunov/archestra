@@ -12,6 +12,18 @@ type UpsertMcpServerImageUpdateStateParams = {
   availableImageDigest?: string | null;
   status?: McpServerImageUpdateStatus;
   lastRestartedAt?: Date | null;
+  lastSuccessfulCheckedAt?: Date | null;
+  lastFailedAt?: Date | null;
+  lastErrorCategory?: string | null;
+  lastErrorMessage?: string | null;
+  consecutiveFailureCount?: number;
+};
+
+type RecordMcpServerImageUpdateFailureParams = {
+  mcpServerId: string;
+  checkedAt: Date;
+  errorCategory: string;
+  errorMessage: string;
 };
 
 class McpServerImageUpdateStateModel {
@@ -107,6 +119,24 @@ class McpServerImageUpdateStateModel {
 
     return !!state;
   }
+
+  static async recordFailure(
+    params: RecordMcpServerImageUpdateFailureParams,
+  ): Promise<McpServerImageUpdateState | null> {
+    const currentState = await McpServerImageUpdateStateModel.findByMcpServerId(
+      params.mcpServerId,
+    );
+
+    return McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: params.mcpServerId,
+      lastCheckedAt: params.checkedAt,
+      status: "check_failed",
+      lastFailedAt: params.checkedAt,
+      lastErrorCategory: params.errorCategory,
+      lastErrorMessage: params.errorMessage,
+      consecutiveFailureCount: (currentState?.consecutiveFailureCount ?? 0) + 1,
+    });
+  }
 }
 
 export default McpServerImageUpdateStateModel;
@@ -147,6 +177,21 @@ function pickDefinedLeanFields(params: UpsertMcpServerImageUpdateStateParams) {
   }
   if ("lastRestartedAt" in params) {
     fields.lastRestartedAt = params.lastRestartedAt;
+  }
+  if ("lastSuccessfulCheckedAt" in params) {
+    fields.lastSuccessfulCheckedAt = params.lastSuccessfulCheckedAt;
+  }
+  if ("lastFailedAt" in params) {
+    fields.lastFailedAt = params.lastFailedAt;
+  }
+  if ("lastErrorCategory" in params) {
+    fields.lastErrorCategory = params.lastErrorCategory;
+  }
+  if ("lastErrorMessage" in params) {
+    fields.lastErrorMessage = params.lastErrorMessage;
+  }
+  if ("consecutiveFailureCount" in params) {
+    fields.consecutiveFailureCount = params.consecutiveFailureCount;
   }
 
   return fields;

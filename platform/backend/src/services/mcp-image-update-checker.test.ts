@@ -60,6 +60,11 @@ describe("processMcpServerImageUpdateCheck", () => {
       runningImageDigest: "sha256:pinned123",
       availableImageDigest: "sha256:pinned123",
       status: "up_to_date",
+      lastSuccessfulCheckedAt: CHECKED_AT,
+      lastFailedAt: null,
+      lastErrorCategory: null,
+      lastErrorMessage: null,
+      consecutiveFailureCount: 0,
     });
   });
 
@@ -106,6 +111,8 @@ describe("processMcpServerImageUpdateCheck", () => {
       runningImageDigest: "sha256:same",
       availableImageDigest: "sha256:same",
       status: "up_to_date",
+      lastSuccessfulCheckedAt: CHECKED_AT,
+      consecutiveFailureCount: 0,
     });
   });
 
@@ -443,7 +450,15 @@ describe("processMcpServerImageUpdateCheck", () => {
       availableImageDigest: "sha256:new",
     });
     expect(service.scheduleFollowUpCheckMock).not.toHaveBeenCalled();
-    expect(state).toBeNull();
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: CHECKED_AT,
+      status: "check_failed",
+      lastFailedAt: CHECKED_AT,
+      lastErrorCategory: "reinstall_failed",
+      lastErrorMessage: "reinstall failed",
+      consecutiveFailureCount: 1,
+    });
   });
 
   test("skips auto-reinstall when manual reinstall becomes required before reinstall is attempted", async ({
@@ -528,7 +543,7 @@ describe("processMcpServerImageUpdateCheck", () => {
     });
   });
 
-  test("skips persistence when configured image is missing", async ({
+  test("persists failed state when configured image is missing", async ({
     makeInternalMcpCatalog,
     makeMcpServer,
   }) => {
@@ -555,10 +570,18 @@ describe("processMcpServerImageUpdateCheck", () => {
 
     expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
     expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
-    expect(state).toBeNull();
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: CHECKED_AT,
+      status: "check_failed",
+      lastFailedAt: CHECKED_AT,
+      lastErrorCategory: "missing_configured_image",
+      lastErrorMessage: "No Docker image is configured for this MCP server.",
+      consecutiveFailureCount: 1,
+    });
   });
 
-  test("logs and skips persistence when running digest inspection fails", async ({
+  test("persists failed state when running digest inspection fails", async ({
     makeInternalMcpCatalog,
     makeMcpServer,
   }) => {
@@ -587,10 +610,18 @@ describe("processMcpServerImageUpdateCheck", () => {
       server.id,
     );
 
-    expect(state).toBeNull();
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: CHECKED_AT,
+      status: "check_failed",
+      lastFailedAt: CHECKED_AT,
+      lastErrorCategory: "running_digest_error",
+      lastErrorMessage: "running digest failed",
+      consecutiveFailureCount: 1,
+    });
   });
 
-  test("logs and skips persistence when probe digest resolution fails", async ({
+  test("persists failed state when probe digest resolution fails", async ({
     makeInternalMcpCatalog,
     makeMcpServer,
   }) => {
@@ -619,7 +650,191 @@ describe("processMcpServerImageUpdateCheck", () => {
       server.id,
     );
 
-    expect(state).toBeNull();
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: CHECKED_AT,
+      status: "check_failed",
+      lastFailedAt: CHECKED_AT,
+      lastErrorCategory: "available_digest_error",
+      lastErrorMessage: "probe digest failed",
+      consecutiveFailureCount: 1,
+    });
+  });
+
+  test("persists timeout failure state with a safe display message", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    const timeoutError = new Error(
+      "pull timeout with token=super-secret-value",
+    );
+    timeoutError.name = "TimeoutError";
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: timeoutError,
+    });
+
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      status: "check_failed",
+      lastErrorCategory: "timeout",
+      lastErrorMessage: "Image update check timed out.",
+      consecutiveFailureCount: 1,
+    });
+    expect(state?.lastErrorMessage).not.toContain("super-secret-value");
+  });
+
+  test("does not keep showing previous up_to_date state after a failed check", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    const previousSuccessAt = new Date("2026-01-01T00:05:00.000Z");
+    await McpServerImageUpdateStateModel.upsertLatestState({
+      mcpServerId: server.id,
+      lastCheckedAt: previousSuccessAt,
+      lastSuccessfulCheckedAt: previousSuccessAt,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:old",
+      status: "up_to_date",
+    });
+    const runtime = createRuntime({
+      runningDigest: new Error("cluster unavailable"),
+      availableDigest: "sha256:new",
+    });
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: CHECKED_AT,
+      lastSuccessfulCheckedAt: previousSuccessAt,
+      runningImageDigest: "sha256:old",
+      availableImageDigest: "sha256:old",
+      status: "check_failed",
+      lastErrorCategory: "running_digest_error",
+      lastErrorMessage: "cluster unavailable",
+      consecutiveFailureCount: 1,
+    });
+  });
+
+  test("successful check clears visible failure state", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    await McpServerImageUpdateStateModel.recordFailure({
+      mcpServerId: server.id,
+      checkedAt: new Date("2026-01-01T00:05:00.000Z"),
+      errorCategory: "available_digest_error",
+      errorMessage: "Available image digest could not be resolved.",
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:same",
+      availableDigest: "sha256:same",
+    });
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      lastCheckedAt: CHECKED_AT,
+      lastSuccessfulCheckedAt: CHECKED_AT,
+      status: "up_to_date",
+      lastFailedAt: null,
+      lastErrorCategory: null,
+      lastErrorMessage: null,
+      consecutiveFailureCount: 0,
+    });
+  });
+
+  test("sanitizes persisted error messages", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: { dockerImage: "registry.example.com/mcp/server:stable" },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: new Error(
+        "pull failed https://user:password@registry.example.com?token=registry-secret Authorization: Bearer abc123",
+      ),
+    });
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: CHECKED_AT,
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(state?.lastErrorMessage).toContain("[redacted]");
+    expect(state?.lastErrorMessage).not.toContain("password");
+    expect(state?.lastErrorMessage).not.toContain("registry-secret");
+    expect(state?.lastErrorMessage).not.toContain("abc123");
+    expect(state?.lastErrorMessage).not.toContain("user:password");
   });
 
   test("passes custom available digest timeout to runtime", async ({

@@ -97,6 +97,13 @@ export function McpImageUpdateSettings({
                 value={formatTimestamp(server.imageUpdateState?.lastCheckedAt)}
               />
               <ImageUpdateStateItem
+                label="Last successful"
+                value={formatTimestamp(
+                  server.imageUpdateState?.lastSuccessfulCheckedAt,
+                  "Never",
+                )}
+              />
+              <ImageUpdateStateItem
                 label="Last reinstalled"
                 value={formatTimestamp(
                   server.imageUpdateState?.lastRestartedAt,
@@ -119,6 +126,30 @@ export function McpImageUpdateSettings({
                   />
                 }
               />
+              {server.imageUpdateState?.status === "check_failed" && (
+                <>
+                  <ImageUpdateStateItem
+                    label="Last failed"
+                    value={formatTimestamp(
+                      server.imageUpdateState.lastFailedAt,
+                      "Never",
+                    )}
+                  />
+                  <ImageUpdateStateItem
+                    label="Consecutive failures"
+                    value={server.imageUpdateState.consecutiveFailureCount}
+                  />
+                  <ImageUpdateStateItem
+                    label="Last error"
+                    value={
+                      <FailureMessage
+                        category={server.imageUpdateState.lastErrorCategory}
+                        message={server.imageUpdateState.lastErrorMessage}
+                      />
+                    }
+                  />
+                </>
+              )}
             </dl>
           </div>
         ))}
@@ -200,6 +231,24 @@ function DigestValue({ value }: { value?: string | null }) {
   );
 }
 
+function FailureMessage({
+  category,
+  message,
+}: {
+  category?: string | null;
+  message?: string | null;
+}) {
+  const displayMessage = message || "Image update check failed.";
+
+  return (
+    <TruncatedTooltip content={displayMessage}>
+      <span className="block truncate text-xs">
+        {category ? `${category}: ${displayMessage}` : displayMessage}
+      </span>
+    </TruncatedTooltip>
+  );
+}
+
 function formatTimestamp(value?: string | null, fallback = "Not checked yet") {
   if (!value) {
     return <span className="text-muted-foreground">{fallback}</span>;
@@ -239,6 +288,11 @@ const STATUS_CONFIG = {
     label: "Pending",
     variant: "default",
     className: "bg-blue-600 text-white",
+  },
+  check_failed: {
+    label: "Check failed",
+    variant: "default",
+    className: "bg-destructive text-destructive-foreground",
   },
 } as const satisfies Record<
   ImageUpdateStatus,

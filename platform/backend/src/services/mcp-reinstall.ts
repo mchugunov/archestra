@@ -1,6 +1,7 @@
 import { McpServerRuntimeManager } from "@/k8s/mcp-server-runtime";
 import logger from "@/logging";
 import { McpServerModel, ToolModel } from "@/models";
+import { getImageUpdateErrorLogFields } from "@/services/mcp-image-update-error";
 import type { InternalMcpCatalog, LocalConfig, McpServer } from "@/types";
 
 /**
@@ -257,13 +258,13 @@ export async function autoReinstallLocalMcpServerAfterImageUpdate(params: {
       "Automatic MCP server reinstall after image update completed",
     );
   } catch (error) {
+    const errorFields = getImageUpdateErrorLogFields(error);
     await McpServerModel.update(server.id, {
       localInstallationStatus: "error",
-      localInstallationError:
-        error instanceof Error ? error.message : "Unknown error",
+      localInstallationError: errorFields.errorMessage,
     });
     logger.error(
-      { ...logContext, err: error },
+      { ...logContext, ...errorFields },
       "Failed automatic MCP server reinstall after image update",
     );
     throw error;
