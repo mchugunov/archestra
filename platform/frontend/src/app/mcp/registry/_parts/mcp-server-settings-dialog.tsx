@@ -362,7 +362,7 @@ export function McpServerSettingsDialog({
                   keepOpenOnSave
                   onDirtyChange={setIsConfigDirty}
                   submitRef={configSubmitRef}
-                  contentBeforeFields={
+                  dockerCardContent={
                     <McpImageUpdateSettings
                       installs={installs}
                       variant={variant}

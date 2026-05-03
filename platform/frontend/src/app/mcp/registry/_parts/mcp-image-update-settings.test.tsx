@@ -34,8 +34,10 @@ describe("McpImageUpdateSettings", () => {
             imageUpdateState: {
               mcpServerId: "server-1",
               lastCheckedAt: "2026-01-02T03:04:05.000Z",
-              runningImageDigest: "sha256:running",
-              availableImageDigest: "sha256:available",
+              runningImageDigest:
+                "sha256:f89c25ff172c74ebf9e583008301812d63115dfdc550e3b377337b148c6512cb",
+              availableImageDigest:
+                "sha256:a0c8fadf9a6431fa6ca145a6b0831c37cd20cb6cdd5ead014c044215d8ce1807",
               status: "update_available",
               lastRestartedAt: null,
               updatedAt: "2026-01-02T03:04:05.000Z",
@@ -49,12 +51,36 @@ describe("McpImageUpdateSettings", () => {
       screen.getByRole("switch", { name: "Enable image update checks" }),
     ).toBeChecked();
     expect(
-      screen.getByRole("switch", { name: "Enable auto-restart" }),
+      screen.getByRole("switch", { name: "Enable auto-reinstall" }),
     ).not.toBeChecked();
     expect(screen.getByText("Update available")).toBeInTheDocument();
-    expect(screen.getByText("sha256:running")).toBeInTheDocument();
-    expect(screen.getByText("sha256:available")).toBeInTheDocument();
+    expect(screen.getByText("Last reinstalled")).toBeInTheDocument();
+    expect(screen.getByText("sha256:f89c25ff172c")).toBeInTheDocument();
+    expect(screen.getByText("sha256:a0c8fadf9a64")).toBeInTheDocument();
     expect(screen.getByText("Never")).toBeInTheDocument();
+  });
+
+  it("renders restart_triggered as pending", () => {
+    render(
+      <McpImageUpdateSettings
+        variant="local"
+        installs={[
+          makeServer({
+            imageUpdateState: {
+              mcpServerId: "server-1",
+              lastCheckedAt: null,
+              runningImageDigest: null,
+              availableImageDigest: null,
+              status: "restart_triggered",
+              lastRestartedAt: null,
+              updatedAt: "2026-01-02T03:04:05.000Z",
+            },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Pending")).toBeInTheDocument();
   });
 
   it("shows unavailable state for remote servers", () => {
@@ -73,7 +99,7 @@ describe("McpImageUpdateSettings", () => {
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   });
 
-  it("sends a settings update when auto-restart is toggled", async () => {
+  it("sends a settings update when auto-reinstall is toggled", async () => {
     const user = userEvent.setup();
     render(
       <McpImageUpdateSettings
@@ -83,7 +109,7 @@ describe("McpImageUpdateSettings", () => {
     );
 
     await user.click(
-      screen.getByRole("switch", { name: "Enable auto-restart" }),
+      screen.getByRole("switch", { name: "Enable auto-reinstall" }),
     );
 
     expect(mutateMock).toHaveBeenCalledWith({
@@ -101,11 +127,8 @@ function makeServer(
     id: "server-1",
     name: "Local Server",
     serverType: "local",
-    scope: "personal",
     imageUpdateCheckEnabled: true,
     imageUpdateAutoRestartEnabled: true,
-    ownerEmail: "user@example.com",
-    teamDetails: null,
     imageUpdateState: null,
     ...overrides,
   };

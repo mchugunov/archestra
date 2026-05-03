@@ -241,6 +241,61 @@ describe("McpCatalogForm enterprise gating", () => {
     );
   });
 
+  it("renders Docker card content under image pull secrets", () => {
+    render(
+      <McpCatalogForm
+        mode="edit"
+        onSubmit={vi.fn()}
+        initialValues={
+          {
+            id: "catalog-1",
+            name: "Local MCP",
+            description: "",
+            icon: null,
+            serverType: "local",
+            serverUrl: null,
+            oauthConfig: null,
+            userConfig: {},
+            enterpriseManagedConfig: null,
+            localConfig: {
+              command: "",
+              arguments: [],
+              environment: [],
+              envFrom: [],
+              dockerImage: "registry.example.com/mcp/server:latest",
+              transportType: "stdio",
+              httpPort: null,
+              httpPath: "/mcp",
+              serviceAccount: "",
+              imagePullSecrets: [],
+            },
+            deploymentSpecYaml: null,
+            scope: "personal",
+            teams: [],
+            labels: [],
+          } as never
+        }
+        catalogButton={<div>Top catalog action</div>}
+        dockerCardContent={<div>Docker image update settings</div>}
+      />,
+    );
+
+    const topCatalogAction = screen.getByText("Top catalog action");
+    const imagePullSecrets = screen.getByText("Image Pull Secrets");
+    const dockerImageUpdateSettings = screen.getByText(
+      "Docker image update settings",
+    );
+
+    expect(
+      topCatalogAction.compareDocumentPosition(imagePullSecrets) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      imagePullSecrets.compareDocumentPosition(dockerImageUpdateSettings) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("hides automatic tool assignment label copy when advanced tool features are disabled", () => {
     render(<McpCatalogForm mode="create" onSubmit={vi.fn()} />);
 

@@ -3,13 +3,6 @@
 import type { archestraApiTypes } from "@shared";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { TruncatedTooltip } from "@/components/ui/truncated-tooltip";
@@ -22,9 +15,6 @@ export type McpImageUpdateSettingsInstall = Pick<
   | "id"
   | "name"
   | "serverType"
-  | "scope"
-  | "ownerEmail"
-  | "teamDetails"
   | "imageUpdateCheckEnabled"
   | "imageUpdateAutoRestartEnabled"
   | "imageUpdateState"
@@ -48,110 +38,91 @@ export function McpImageUpdateSettings({
   );
 
   return (
-    <Card className="gap-4 py-4">
-      <CardHeader className="gap-1 px-5">
-        <CardTitle className="text-base">Image updates</CardTitle>
-        <CardDescription>
-          Track container image freshness for local MCP server deployments.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4 px-5">
-        {variant !== "local" && (
-          <UnavailableState message="Image update checks are available for local MCP server deployments only." />
-        )}
+    <div className="space-y-4 rounded-lg border p-4">
+      {variant !== "local" && (
+        <UnavailableState message="Image update checks are available for local MCP server deployments only." />
+      )}
 
-        {variant === "local" && localInstalls.length === 0 && (
-          <UnavailableState message="Install this local server to enable image update checks." />
-        )}
+      {variant === "local" && localInstalls.length === 0 && (
+        <UnavailableState message="Install this local server to enable image update checks." />
+      )}
 
-        {variant === "local" &&
-          localInstalls.map((server) => (
-            <div
-              key={server.id}
-              className="space-y-4 rounded-lg border bg-muted/20 p-4"
-            >
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div className="min-w-0">
-                  <TruncatedTooltip content={server.name}>
-                    <div className="truncate text-sm font-medium">
-                      {server.name}
-                    </div>
-                  </TruncatedTooltip>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {formatScope(server)}
-                  </div>
-                </div>
-                <ImageUpdateStatusBadge
-                  status={server.imageUpdateState?.status}
-                />
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                <ImageUpdateSwitch
-                  id={`image-update-check-${server.id}`}
-                  label="Enable image update checks"
-                  description="Periodically compare the running image digest with the registry digest."
-                  checked={server.imageUpdateCheckEnabled}
-                  disabled={updateMutation.isPending}
-                  onCheckedChange={(checked) =>
-                    updateMutation.mutate({
-                      id: server.id,
-                      name: server.name,
-                      imageUpdateCheckEnabled: checked,
-                    })
-                  }
-                />
-                <ImageUpdateSwitch
-                  id={`image-update-auto-restart-${server.id}`}
-                  label="Enable auto-restart"
-                  description="Restart the deployment automatically when a newer digest is detected."
-                  checked={server.imageUpdateAutoRestartEnabled}
-                  disabled={updateMutation.isPending}
-                  onCheckedChange={(checked) =>
-                    updateMutation.mutate({
-                      id: server.id,
-                      name: server.name,
-                      imageUpdateAutoRestartEnabled: checked,
-                    })
-                  }
-                />
-              </div>
-
-              <dl className="grid gap-x-4 gap-y-3 text-sm md:grid-cols-2">
-                <ImageUpdateStateItem
-                  label="Last checked"
-                  value={formatTimestamp(
-                    server.imageUpdateState?.lastCheckedAt,
-                  )}
-                />
-                <ImageUpdateStateItem
-                  label="Last restarted"
-                  value={formatTimestamp(
-                    server.imageUpdateState?.lastRestartedAt,
-                    "Never",
-                  )}
-                />
-                <ImageUpdateStateItem
-                  label="Running digest"
-                  value={
-                    <DigestValue
-                      value={server.imageUpdateState?.runningImageDigest}
-                    />
-                  }
-                />
-                <ImageUpdateStateItem
-                  label="Available digest"
-                  value={
-                    <DigestValue
-                      value={server.imageUpdateState?.availableImageDigest}
-                    />
-                  }
-                />
-              </dl>
+      {variant === "local" &&
+        localInstalls.map((server, index) => (
+          <div
+            key={server.id}
+            className={index === 0 ? "space-y-4" : "space-y-4 border-t pt-4"}
+          >
+            <div className="flex items-center justify-between gap-4">
+              <Label>Image status</Label>
+              <ImageUpdateStatusBadge
+                status={server.imageUpdateState?.status}
+              />
             </div>
-          ))}
-      </CardContent>
-    </Card>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <ImageUpdateSwitch
+                id={`image-update-check-${server.id}`}
+                label="Enable image update checks"
+                description="Periodically compare the running image digest with the registry digest."
+                checked={server.imageUpdateCheckEnabled}
+                disabled={updateMutation.isPending}
+                onCheckedChange={(checked) =>
+                  updateMutation.mutate({
+                    id: server.id,
+                    name: server.name,
+                    imageUpdateCheckEnabled: checked,
+                  })
+                }
+              />
+              <ImageUpdateSwitch
+                id={`image-update-auto-reinstall-${server.id}`}
+                label="Enable auto-reinstall"
+                description="Reinstall and resync tools automatically when a newer digest is detected."
+                checked={server.imageUpdateAutoRestartEnabled}
+                disabled={updateMutation.isPending}
+                onCheckedChange={(checked) =>
+                  updateMutation.mutate({
+                    id: server.id,
+                    name: server.name,
+                    imageUpdateAutoRestartEnabled: checked,
+                  })
+                }
+              />
+            </div>
+
+            <dl className="grid gap-x-4 gap-y-3 text-sm md:grid-cols-2">
+              <ImageUpdateStateItem
+                label="Last checked"
+                value={formatTimestamp(server.imageUpdateState?.lastCheckedAt)}
+              />
+              <ImageUpdateStateItem
+                label="Last reinstalled"
+                value={formatTimestamp(
+                  server.imageUpdateState?.lastRestartedAt,
+                  "Never",
+                )}
+              />
+              <ImageUpdateStateItem
+                label="Running digest"
+                value={
+                  <DigestValue
+                    value={server.imageUpdateState?.runningImageDigest}
+                  />
+                }
+              />
+              <ImageUpdateStateItem
+                label="Available digest"
+                value={
+                  <DigestValue
+                    value={server.imageUpdateState?.availableImageDigest}
+                  />
+                }
+              />
+            </dl>
+          </div>
+        ))}
+    </div>
   );
 }
 
@@ -237,24 +208,15 @@ function formatTimestamp(value?: string | null, fallback = "Not checked yet") {
   return format(new Date(value), "PPp");
 }
 
-function formatScope(server: McpImageUpdateSettingsInstall) {
-  if (server.teamDetails) {
-    return `Team: ${server.teamDetails.name}`;
-  }
-  if (server.ownerEmail) {
-    return `Personal: ${server.ownerEmail}`;
-  }
-  if (server.scope === "org") {
-    return "Organization";
-  }
-  return "Installation";
-}
-
 function shortenDigest(value: string) {
-  if (value.length <= 32) {
+  const digestPrefix = "sha256:";
+  const digestStart = value.indexOf(digestPrefix);
+  if (digestStart === -1) {
     return value;
   }
-  return `${value.slice(0, 29)}...`;
+
+  const hash = value.slice(digestStart + digestPrefix.length);
+  return `${digestPrefix}${hash.slice(0, 12)}`;
 }
 
 const STATUS_CONFIG = {
@@ -274,7 +236,7 @@ const STATUS_CONFIG = {
     className: "bg-amber-600 text-white",
   },
   restart_triggered: {
-    label: "Restart triggered",
+    label: "Pending",
     variant: "default",
     className: "bg-blue-600 text-white",
   },
