@@ -228,13 +228,14 @@ describe("McpServerImageUpdateStateModel", () => {
     }) => {
       const restartedServer = await makeMcpServer();
       const notRestartedServer = await makeMcpServer();
+      const failedServer = await makeMcpServer();
 
       await McpServerImageUpdateStateModel.upsertLatestState({
         mcpServerId: restartedServer.id,
         lastCheckedAt: new Date("2026-01-01T00:10:00.000Z"),
         runningImageDigest: "sha256:old",
         availableImageDigest: "sha256:new",
-        status: "restart_triggered",
+        status: "reinstalling",
         lastRestartedAt: new Date("2026-01-01T00:10:00.000Z"),
       });
       await McpServerImageUpdateStateModel.upsertLatestState({
@@ -243,6 +244,14 @@ describe("McpServerImageUpdateStateModel", () => {
         runningImageDigest: "sha256:old",
         availableImageDigest: "sha256:new",
         status: "update_available",
+      });
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: failedServer.id,
+        lastCheckedAt: new Date("2026-01-01T00:10:00.000Z"),
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:new",
+        status: "check_failed",
+        lastRestartedAt: new Date("2026-01-01T00:10:00.000Z"),
       });
 
       await expect(
@@ -260,6 +269,12 @@ describe("McpServerImageUpdateStateModel", () => {
       await expect(
         McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
           mcpServerId: notRestartedServer.id,
+          availableImageDigest: "sha256:new",
+        }),
+      ).resolves.toBe(false);
+      await expect(
+        McpServerImageUpdateStateModel.hasRestartTriggeredForDigest({
+          mcpServerId: failedServer.id,
           availableImageDigest: "sha256:new",
         }),
       ).resolves.toBe(false);

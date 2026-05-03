@@ -491,7 +491,6 @@ export class McpImageUpdateCheckerService {
       availableImageDigest: params.availableImageDigest,
       targetImageDigest: params.availableImageDigest,
       status: "reinstalling",
-      lastRestartedAt: params.checkedAt,
       rolloutStartedAt: params.checkedAt,
       rolloutLastCheckedAt: params.checkedAt,
       rolloutAttemptCount: 0,
@@ -505,6 +504,19 @@ export class McpImageUpdateCheckerService {
       catalogItem: params.catalog,
       runningImageDigest: params.runningImageDigest,
       availableImageDigest: params.availableImageDigest,
+    });
+    await this.persistImageUpdateState({
+      mcpServerId: params.server.id,
+      checkedAt: params.checkedAt,
+      runningImageDigest: params.runningImageDigest,
+      availableImageDigest: params.availableImageDigest,
+      targetImageDigest: params.availableImageDigest,
+      status: "reinstalling",
+      lastRestartedAt: params.checkedAt,
+      rolloutStartedAt: params.checkedAt,
+      rolloutLastCheckedAt: params.checkedAt,
+      rolloutAttemptCount: 0,
+      lastSuccessfulCheckedAt: null,
     });
     await this.scheduleDelayedFollowUpCheck({
       attemptCount: 1,

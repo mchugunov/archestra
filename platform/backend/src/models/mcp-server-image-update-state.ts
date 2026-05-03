@@ -116,6 +116,7 @@ class McpServerImageUpdateStateModel {
             schema.mcpServerImageUpdateStatesTable.availableImageDigest,
             params.availableImageDigest,
           ),
+          eq(schema.mcpServerImageUpdateStatesTable.status, "reinstalling"),
           isNotNull(schema.mcpServerImageUpdateStatesTable.lastRestartedAt),
         ),
       )

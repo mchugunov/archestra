@@ -327,7 +327,7 @@ describe("processMcpServerImageUpdateCheck", () => {
     expect(runtime.getRunningImageDigest).toHaveBeenCalledTimes(2);
   });
 
-  test("does not trigger duplicate auto-reinstall for a digest already restarted", async ({
+  test("does not trigger duplicate auto-reinstall for a digest with restart in progress", async ({
     makeInternalMcpCatalog,
     makeMcpServer,
   }) => {
@@ -346,7 +346,7 @@ describe("processMcpServerImageUpdateCheck", () => {
       lastCheckedAt: new Date("2026-01-01T00:05:00.000Z"),
       runningImageDigest: "sha256:old",
       availableImageDigest: "sha256:new",
-      status: "restart_triggered",
+      status: "reinstalling",
       lastRestartedAt: new Date("2026-01-01T00:05:00.000Z"),
     });
     const runtime = createRuntime({
@@ -725,7 +725,24 @@ describe("processMcpServerImageUpdateCheck", () => {
       lastErrorCategory: "reinstall_failed",
       lastErrorMessage: "reinstall failed",
       consecutiveFailureCount: 1,
+      lastRestartedAt: null,
     });
+
+    autoReinstallAfterImageUpdateMock.mockClear();
+    const retryRuntime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const retryService = new TestMcpImageUpdateCheckerService({
+      runtime: retryRuntime,
+    });
+
+    await retryService.processMcpServerImageUpdateCheck({
+      eligibleServer: { server, catalog },
+      checkedAt: new Date("2026-01-01T00:11:00.000Z"),
+    });
+
+    expect(autoReinstallAfterImageUpdateMock).toHaveBeenCalledTimes(1);
   });
 
   test("skips auto-reinstall when manual reinstall becomes required before reinstall is attempted", async ({
