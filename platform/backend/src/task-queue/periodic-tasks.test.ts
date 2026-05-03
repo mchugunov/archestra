@@ -22,4 +22,15 @@ describe("PERIODIC_TASK_DEFINITIONS", () => {
       ]),
     );
   });
+
+  test("keeps MCP image update follow-up checks out of periodic scheduling", () => {
+    expect(PERIODIC_TASK_DEFINITIONS).toContainEqual(
+      expect.objectContaining({ taskType: "check_mcp_image_updates" }),
+    );
+    expect(PERIODIC_TASK_DEFINITIONS).not.toContainEqual(
+      expect.objectContaining({
+        taskType: "check_mcp_image_update_follow_up",
+      }),
+    );
+  });
 });

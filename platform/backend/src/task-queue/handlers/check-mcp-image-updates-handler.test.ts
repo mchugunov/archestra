@@ -7,13 +7,24 @@ import McpServerImageUpdateStateModel from "@/models/mcp-server-image-update-sta
 import { McpImageUpdateCheckerService } from "@/services/mcp-image-update-checker";
 import { describe, expect, test } from "@/test";
 import type { TaskHandler } from "@/types";
-import { handleCheckMcpImageUpdates } from "./check-mcp-image-updates-handler";
+import {
+  handleCheckMcpImageUpdateFollowUp,
+  handleCheckMcpImageUpdates,
+} from "./check-mcp-image-updates-handler";
 
 describe("handleCheckMcpImageUpdates", () => {
   test("is compatible with the task queue handler contract", async () => {
     const taskHandler: TaskHandler = handleCheckMcpImageUpdates;
 
     await expect(taskHandler({})).resolves.toBeUndefined();
+  });
+
+  test("follow-up handler is compatible with the task queue handler contract", async () => {
+    const taskHandler: TaskHandler = handleCheckMcpImageUpdateFollowUp;
+
+    await expect(
+      taskHandler({ mcpServerId: "00000000-0000-0000-0000-000000000001" }),
+    ).resolves.toBeUndefined();
   });
 
   test("loads eligible local MCP servers and does not crash when none exist", async () => {
@@ -144,6 +155,97 @@ describe("handleCheckMcpImageUpdates", () => {
       status: "update_available",
     });
     expect(otherState).toBeNull();
+  });
+
+  test("dedicated follow-up path targets one MCP server and skips auto-restart", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const targetCatalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: {
+        dockerImage: "registry.example.com/mcp/follow-up-target:stable",
+      },
+    });
+    const otherCatalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: {
+        dockerImage: "registry.example.com/mcp/follow-up-other:stable",
+      },
+    });
+    const targetServer = await makeMcpServer({
+      catalogId: targetCatalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    const otherServer = await makeMcpServer({
+      catalogId: otherCatalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      imageUpdateAutoRestartEnabled: true,
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:old",
+      availableDigest: "sha256:new",
+    });
+    const service = new McpImageUpdateCheckerService({
+      maxJitterMs: 0,
+      runtime,
+    });
+
+    await service.handleCheckMcpImageUpdateFollowUp({
+      mcpServerId: targetServer.id,
+    });
+
+    const targetState = await McpServerImageUpdateStateModel.findByMcpServerId(
+      targetServer.id,
+    );
+    const otherState = await McpServerImageUpdateStateModel.findByMcpServerId(
+      otherServer.id,
+    );
+
+    expect(runtime.getRunningImageDigest).toHaveBeenCalledTimes(1);
+    expect(runtime.getRunningImageDigest).toHaveBeenCalledWith(targetServer.id);
+    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
+    expect(targetState).toMatchObject({
+      mcpServerId: targetServer.id,
+      status: "update_available",
+    });
+    expect(otherState).toBeNull();
+  });
+
+  test("dedicated follow-up path ignores invalid payloads", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: {
+        dockerImage: "registry.example.com/mcp/ignored-follow-up:stable",
+      },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+    });
+    const runtime = createRuntime();
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.handleCheckMcpImageUpdateFollowUp({});
+    await service.handleCheckMcpImageUpdateFollowUp({
+      mcpServerId: "not-a-valid-id",
+    });
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
+    expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
+    expect(runtime.rolloutRestartServer).not.toHaveBeenCalled();
+    expect(state).toBeNull();
   });
 
   test("continues processing later servers when one image check fails", async ({

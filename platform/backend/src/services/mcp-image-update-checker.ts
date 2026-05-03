@@ -1,4 +1,5 @@
 import { TimeInMs } from "@shared";
+import { z } from "zod";
 import {
   type ImageUpdateRuntime,
   isDigestPinnedImage,
@@ -108,6 +109,24 @@ export class McpImageUpdateCheckerService {
           allowAutoRestart: !parsedPayload.skipAutoRestart,
           applyJitter: !parsedPayload.mcpServerId,
         }),
+    });
+  }
+
+  async handleCheckMcpImageUpdateFollowUp(
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    const mcpServerId = parseMcpImageUpdateFollowUpPayload(payload);
+    if (!mcpServerId) {
+      logger.warn(
+        { payload },
+        "Skipping MCP image update follow-up task with invalid payload",
+      );
+      return;
+    }
+
+    await this.handleCheckMcpImageUpdates({
+      mcpServerId,
+      skipAutoRestart: true,
     });
   }
 
@@ -381,15 +400,25 @@ async function scheduleImageUpdateFollowUpCheck(
   params: ScheduleFollowUpCheckParams,
 ): Promise<void> {
   await taskQueueService.enqueue({
-    taskType: "check_mcp_image_updates",
+    taskType: "check_mcp_image_update_follow_up",
     payload: {
       mcpServerId: params.mcpServerId,
-      skipAutoRestart: true,
     },
     maxAttempts: 1,
     scheduledFor: params.scheduledFor,
   });
 }
+
+function parseMcpImageUpdateFollowUpPayload(
+  payload: Record<string, unknown>,
+): string | null {
+  const result = McpImageUpdateFollowUpPayloadSchema.safeParse(payload);
+  return result.success ? result.data.mcpServerId : null;
+}
+
+const McpImageUpdateFollowUpPayloadSchema = z.object({
+  mcpServerId: z.string().uuid(),
+});
 
 function getJitterMs(maxJitterMs: number): number {
   if (maxJitterMs <= 0) {

@@ -2,7 +2,10 @@ import type { TaskQueueService } from "../task-queue";
 import { handleBatchEmbedding } from "./batch-embedding-handler";
 import { handleCheckDueConnectors } from "./check-due-connectors-handler";
 import { handleCheckDueScheduleTriggers } from "./check-due-schedule-triggers-handler";
-import { handleCheckMcpImageUpdates } from "./check-mcp-image-updates-handler";
+import {
+  handleCheckMcpImageUpdateFollowUp,
+  handleCheckMcpImageUpdates,
+} from "./check-mcp-image-updates-handler";
 import { handleConnectorSync } from "./connector-sync-handler";
 import { handleProcessUploadedFiles } from "./process-uploaded-files-handler";
 import { handleScheduleTriggerRunExecution } from "./schedule-trigger-run-handler";
@@ -25,6 +28,10 @@ export function registerTaskHandlers(taskQueueService: TaskQueueService): void {
   taskQueueService.registerHandler(
     "check_mcp_image_updates",
     handleCheckMcpImageUpdates,
+  );
+  taskQueueService.registerHandler(
+    "check_mcp_image_update_follow_up",
+    handleCheckMcpImageUpdateFollowUp,
   );
   taskQueueService.registerHandler(
     "schedule_trigger_run_execute",
