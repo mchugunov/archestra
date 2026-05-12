@@ -1898,14 +1898,10 @@ async function assertScopedSettingsUpdateAuthorization(params: {
 
   switch (mcpServer.scope) {
     case "personal": {
-      const { success: hasMcpServerUpdate } = await hasPermission(
-        { mcpServerInstallation: ["update"] },
-        headers,
-      );
-      if (hasMcpServerUpdate) return;
+      if (mcpServer.ownerId === userId) return;
       throw new ApiError(
         403,
-        "You need MCP server update permission to update personal connection settings",
+        "Only the connection owner can update personal connection settings",
       );
     }
     case "team": {

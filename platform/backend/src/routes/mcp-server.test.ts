@@ -1794,7 +1794,7 @@ describe("mcp server inspect route", () => {
     });
   });
 
-  test("allows an editor to update image update settings for another user's personal connection", async ({
+  test("rejects an editor updating image update settings for another user's personal connection", async ({
     makeInternalMcpCatalog,
     makeMcpServer,
     makeUser,
@@ -1824,11 +1824,14 @@ describe("mcp server inspect route", () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode).toBe(403);
+    expect(response.json().error.message).toContain(
+      "Only the connection owner can update personal connection settings",
+    );
     const persisted = await McpServerModel.findById(mcpServer.id);
     expect(persisted).toMatchObject({
-      imageUpdateCheckEnabled: true,
-      imageUpdateAutoRestartEnabled: true,
+      imageUpdateCheckEnabled: false,
+      imageUpdateAutoRestartEnabled: false,
     });
   });
 
@@ -1862,7 +1865,7 @@ describe("mcp server inspect route", () => {
 
     expect(response.statusCode).toBe(403);
     expect(response.json().error.message).toContain(
-      "You need MCP server update permission to update personal connection settings",
+      "Only the connection owner can update personal connection settings",
     );
 
     const persisted = await McpServerModel.findById(mcpServer.id);
