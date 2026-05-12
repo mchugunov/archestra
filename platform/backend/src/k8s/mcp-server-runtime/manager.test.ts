@@ -1005,6 +1005,48 @@ describe("McpServerRuntimeManager.resolveAvailableImageDigest", () => {
   });
 });
 
+describe("McpServerRuntimeManager.prepareImageUpdateCheck", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test("delegates to the runtime image digest probe instance", async () => {
+    const { K8sImageDigestProbe } = await import("./image-digest-probe");
+    const cleanupSpy = vi
+      .spyOn(K8sImageDigestProbe.prototype, "cleanupStaleProbePods")
+      .mockResolvedValue(undefined);
+    const { McpServerRuntimeManager } = await import("./manager");
+    const manager = new McpServerRuntimeManager();
+
+    await manager.prepareImageUpdateCheck();
+
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+
+    cleanupSpy.mockRestore();
+  });
+
+  test("does nothing when the probe is unavailable", async () => {
+    const { K8sImageDigestProbe } = await import("./image-digest-probe");
+    const cleanupSpy = vi
+      .spyOn(K8sImageDigestProbe.prototype, "cleanupStaleProbePods")
+      .mockResolvedValue(undefined);
+    const { McpServerRuntimeManager } = await import("./manager");
+    const manager = new McpServerRuntimeManager();
+
+    (
+      manager as unknown as {
+        imageDigestProbe: undefined;
+      }
+    ).imageDigestProbe = undefined;
+
+    await manager.prepareImageUpdateCheck();
+
+    expect(cleanupSpy).not.toHaveBeenCalled();
+
+    cleanupSpy.mockRestore();
+  });
+});
+
 describe("McpServerRuntimeManager.listDockerRegistrySecrets", () => {
   test("returns empty array when k8sApi is not initialized", async () => {
     const { McpServerRuntimeManager } = await import("./manager");

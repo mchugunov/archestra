@@ -36,6 +36,55 @@ describe("handleCheckMcpImageUpdates", () => {
       service.handleCheckMcpImageUpdates({}),
     ).resolves.toBeUndefined();
 
+    expect(runtime.prepareImageUpdateCheck).toHaveBeenCalledTimes(1);
+    expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
+    expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
+  });
+
+  test("continues image update checks when runtime preparation fails", async ({
+    makeInternalMcpCatalog,
+    makeMcpServer,
+  }) => {
+    const catalog = await makeInternalMcpCatalog({
+      serverType: "local",
+      localConfig: {
+        dockerImage: "registry.example.com/mcp/prepare-failure:stable",
+      },
+    });
+    const server = await makeMcpServer({
+      catalogId: catalog.id,
+      serverType: "local",
+      imageUpdateCheckEnabled: true,
+      localInstallationStatus: "success",
+    });
+    const runtime = createRuntime({
+      runningDigest: "sha256:same",
+      availableDigest: "sha256:same",
+      prepareError: new Error("prepare failed"),
+    });
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.handleCheckMcpImageUpdates({});
+
+    const state = await McpServerImageUpdateStateModel.findByMcpServerId(
+      server.id,
+    );
+
+    expect(runtime.prepareImageUpdateCheck).toHaveBeenCalledTimes(1);
+    expect(runtime.getRunningImageDigest).toHaveBeenCalledWith(server.id);
+    expect(state).toMatchObject({
+      mcpServerId: server.id,
+      status: "up_to_date",
+    });
+  });
+
+  test("does not prepare runtime for invalid image check payloads", async () => {
+    const runtime = createRuntime();
+    const service = new McpImageUpdateCheckerService({ runtime });
+
+    await service.handleCheckMcpImageUpdates({ mcpServerId: 123 });
+
+    expect(runtime.prepareImageUpdateCheck).not.toHaveBeenCalled();
     expect(runtime.getRunningImageDigest).not.toHaveBeenCalled();
     expect(runtime.resolveAvailableImageDigest).not.toHaveBeenCalled();
   });
@@ -550,9 +599,11 @@ function createRuntime(
   options: {
     runningDigest?: string | null;
     availableDigest?: string | null;
+    prepareError?: Error;
   } = {},
 ) {
   const runtime = {
+    prepareImageUpdateCheck: vi.fn<() => Promise<void>>(),
     getRunningImageDigest:
       vi.fn<(mcpServerId: string) => Promise<string | null>>(),
     resolveAvailableImageDigest:
@@ -563,6 +614,11 @@ function createRuntime(
       >(),
   } satisfies ImageUpdateRuntime;
 
+  if (options.prepareError) {
+    runtime.prepareImageUpdateCheck.mockRejectedValue(options.prepareError);
+  } else {
+    runtime.prepareImageUpdateCheck.mockResolvedValue(undefined);
+  }
   runtime.getRunningImageDigest.mockResolvedValue(
     options.runningDigest ?? "sha256:running",
   );

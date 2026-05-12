@@ -278,11 +278,7 @@ export default class K8sDeployment {
     this.environmentValues = options.environmentValues;
     this.imageDigestProbe =
       options.imageDigestProbe ??
-      new K8sImageDigestProbe({
-        k8sApi: options.k8sApi,
-        namespace: options.namespace,
-        mcpServer: options.mcpServer,
-      });
+      new K8sImageDigestProbe(options.k8sApi, options.namespace);
     this.deploymentName = K8sDeployment.constructDeploymentName(
       options.mcpServer,
       options.catalogItem,
@@ -1734,6 +1730,7 @@ export default class K8sDeployment {
     );
 
     return this.imageDigestProbe.resolveAvailableImageDigest({
+      mcpServer: this.mcpServer,
       image: options.image,
       imagePullSecrets: schedulingSpec.imagePullSecrets,
       nodeSelector: schedulingSpec.nodeSelector,

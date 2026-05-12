@@ -15,9 +15,12 @@ export interface ImageDigestProbe {
   resolveAvailableImageDigest(
     options: ResolveAvailableImageDigestProbeOptions,
   ): Promise<string>;
+
+  cleanupStaleProbePods(): Promise<void>;
 }
 
 export interface ResolveAvailableImageDigestProbeOptions {
+  mcpServer: McpServer;
   image: string;
   imagePullSecrets?: ResolvedImagePullSecretName[];
   nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null;
@@ -28,13 +31,7 @@ export interface ResolveAvailableImageDigestProbeOptions {
   pollIntervalMs?: number;
 }
 
-export interface K8sImageDigestProbeOptions {
-  k8sApi: k8s.CoreV1Api;
-  namespace: string;
-  mcpServer: McpServer;
-}
-
-export interface ImageDigestProbePodSpecOptions {
+interface ImageDigestProbePodSpecOptions {
   image: string;
   podName: string;
   namespace: string;
@@ -49,17 +46,18 @@ export interface ImageDigestProbePodSpecOptions {
 
 export class K8sImageDigestProbe implements ImageDigestProbe {
   private static readonly CONTAINER_NAME = "mcp-image-digest-probe";
+  private static readonly PROBE_LABEL_SELECTOR =
+    `app=${K8sImageDigestProbe.CONTAINER_NAME}`;
   private static readonly DEFAULT_TIMEOUT_MS = TimeInMs.Second * 60;
   private static readonly DEFAULT_POLL_INTERVAL_MS = TimeInMs.Second;
+  private static readonly DEFAULT_STALE_PROBE_POD_TTL_MS = TimeInMs.Minute * 15;
 
   private readonly k8sApi: k8s.CoreV1Api;
   private readonly namespace: string;
-  private readonly mcpServer: McpServer;
 
-  constructor(options: K8sImageDigestProbeOptions) {
-    this.k8sApi = options.k8sApi;
-    this.namespace = options.namespace;
-    this.mcpServer = options.mcpServer;
+  constructor(k8sApi: k8s.CoreV1Api, namespace: string) {
+    this.k8sApi = k8sApi;
+    this.namespace = namespace;
   }
 
   /**
@@ -72,15 +70,15 @@ export class K8sImageDigestProbe implements ImageDigestProbe {
       options.timeoutMs ?? K8sImageDigestProbe.DEFAULT_TIMEOUT_MS;
     const pollIntervalMs =
       options.pollIntervalMs ?? K8sImageDigestProbe.DEFAULT_POLL_INTERVAL_MS;
-    const podName = this.constructPodName(options.image);
+    const podName = this.constructPodName(options.image, options.mcpServer);
 
     await this.k8sApi.createNamespacedPod({
       namespace: this.namespace,
-      body: K8sImageDigestProbe.generatePodSpec({
+      body: this.generatePodSpec({
         image: options.image,
         podName,
         namespace: this.namespace,
-        mcpServer: this.mcpServer,
+        mcpServer: options.mcpServer,
         imagePullSecrets: options.imagePullSecrets,
         nodeSelector: options.nodeSelector,
         tolerations: options.tolerations,
@@ -98,16 +96,64 @@ export class K8sImageDigestProbe implements ImageDigestProbe {
         pollIntervalMs,
       });
     } finally {
-      await this.deletePod(podName);
+      await this.deletePod({
+        podName,
+        mcpServerId: options.mcpServer.id,
+      });
     }
   }
 
-  /**
-   * Generate a short-lived pod that asks Kubernetes to resolve an image digest.
-   */
-  static generatePodSpec(options: ImageDigestProbePodSpecOptions): k8s.V1Pod {
+  async cleanupStaleProbePods(): Promise<void> {
+    const nowMs = Date.now();
+    const olderThanMs = K8sImageDigestProbe.DEFAULT_STALE_PROBE_POD_TTL_MS;
+    let pods: k8s.V1PodList;
+
+    try {
+      pods = await this.k8sApi.listNamespacedPod({
+        namespace: this.namespace,
+        labelSelector: K8sImageDigestProbe.PROBE_LABEL_SELECTOR,
+      });
+    } catch (error) {
+      logger.warn(
+        {
+          err: error,
+          namespace: this.namespace,
+          labelSelector: K8sImageDigestProbe.PROBE_LABEL_SELECTOR,
+          olderThanMs,
+        },
+        "Failed to list stale MCP image digest probe pods",
+      );
+      return;
+    }
+
+    for (const pod of pods.items) {
+      const podName = pod.metadata?.name;
+      const creationTimestamp = pod.metadata?.creationTimestamp;
+      if (!podName || !creationTimestamp) {
+        continue;
+      }
+
+      const createdAtMs = new Date(creationTimestamp).getTime();
+      if (!Number.isFinite(createdAtMs)) {
+        continue;
+      }
+
+      const podAgeMs = nowMs - createdAtMs;
+      if (podAgeMs < olderThanMs) {
+        continue;
+      }
+
+      await this.deletePod({
+        podName,
+        podAgeMs,
+        olderThanMs,
+      });
+    }
+  }
+
+  private generatePodSpec(options: ImageDigestProbePodSpecOptions): k8s.V1Pod {
     const labels = sanitizeMetadataLabels({
-      app: "mcp-image-digest-probe",
+      app: K8sImageDigestProbe.CONTAINER_NAME,
       "mcp-server-probe-id": options.mcpServer.id,
       "mcp-server-name": options.mcpServer.name,
     });
@@ -148,9 +194,7 @@ export class K8sImageDigestProbe implements ImageDigestProbe {
             name: K8sImageDigestProbe.CONTAINER_NAME,
             image: options.image,
             command: ["/bin/true"],
-            imagePullPolicy: K8sImageDigestProbe.getImagePullPolicy(
-              options.image,
-            ),
+            imagePullPolicy: this.getImagePullPolicy(options.image),
             resources: {
               requests: {
                 cpu: "10m",
@@ -163,16 +207,15 @@ export class K8sImageDigestProbe implements ImageDigestProbe {
     };
   }
 
-  private static getImagePullPolicy(
+  private getImagePullPolicy(
     image: string,
   ): k8s.V1Container["imagePullPolicy"] | undefined {
     return isDigestPinnedImage(image) ? undefined : "Always";
   }
 
-  private constructPodName(image: string): string {
+  private constructPodName(image: string, mcpServer: McpServer) {
     const sanitizedId =
-      ensureStringIsRfc1123Compliant(this.mcpServer.id).slice(0, 48) ||
-      "server";
+      ensureStringIsRfc1123Compliant(mcpServer.id).slice(0, 48) || "server";
     const imageHash = createHash("sha256")
       .update(image)
       .digest("hex")
@@ -195,13 +238,12 @@ export class K8sImageDigestProbe implements ImageDigestProbe {
         name: options.podName,
         namespace: this.namespace,
       });
-      const digest = K8sImageDigestProbe.getPodImageDigest(pod);
+      const digest = this.getPodImageDigest(pod);
       if (digest) {
         return digest;
       }
 
-      const pullFailureMessage =
-        K8sImageDigestProbe.getPodPullFailureMessage(pod);
+      const pullFailureMessage = this.getPodPullFailureMessage(pod);
       if (pullFailureMessage) {
         throw new Error(
           `Failed to resolve image digest for ${options.image}: ${pullFailureMessage}`,
@@ -216,7 +258,7 @@ export class K8sImageDigestProbe implements ImageDigestProbe {
     );
   }
 
-  private static getPodImageDigest(pod: k8s.V1Pod): string | null {
+  private getPodImageDigest(pod: k8s.V1Pod): string | null {
     const containerStatus = pod.status?.containerStatuses?.find(
       (status) => status.name === K8sImageDigestProbe.CONTAINER_NAME,
     );
@@ -234,7 +276,7 @@ export class K8sImageDigestProbe implements ImageDigestProbe {
     return digest;
   }
 
-  private static getPodPullFailureMessage(pod: k8s.V1Pod): string | null {
+  private getPodPullFailureMessage(pod: k8s.V1Pod): string | null {
     const containerStatus = pod.status?.containerStatuses?.find(
       (status) => status.name === K8sImageDigestProbe.CONTAINER_NAME,
     );
@@ -252,20 +294,34 @@ export class K8sImageDigestProbe implements ImageDigestProbe {
       : waiting.reason;
   }
 
-  private async deletePod(podName: string): Promise<void> {
+  private async deletePod(options: {
+    podName: string;
+    mcpServerId?: string;
+    podAgeMs?: number;
+    olderThanMs?: number;
+  }): Promise<void> {
+    const logContext = {
+      ...(options.mcpServerId ? { mcpServerId: options.mcpServerId } : {}),
+      podName: options.podName,
+      namespace: this.namespace,
+      ...(options.podAgeMs !== undefined ? { podAgeMs: options.podAgeMs } : {}),
+      ...(options.olderThanMs !== undefined
+        ? { olderThanMs: options.olderThanMs }
+        : {}),
+    };
+
     try {
       await this.k8sApi.deleteNamespacedPod({
-        name: podName,
+        name: options.podName,
         namespace: this.namespace,
       });
+      if (options.podAgeMs !== undefined) {
+        logger.debug(logContext, "Deleted stale MCP image digest probe pod");
+      }
     } catch (error) {
       if (isK8sNotFoundError(error)) {
         logger.debug(
-          {
-            mcpServerId: this.mcpServer.id,
-            podName,
-            namespace: this.namespace,
-          },
+          logContext,
           "MCP image digest probe pod was already deleted",
         );
         return;
@@ -274,9 +330,7 @@ export class K8sImageDigestProbe implements ImageDigestProbe {
       logger.warn(
         {
           err: error,
-          mcpServerId: this.mcpServer.id,
-          podName,
-          namespace: this.namespace,
+          ...logContext,
         },
         "Failed to delete MCP image digest probe pod",
       );

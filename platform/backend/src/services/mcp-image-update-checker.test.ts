@@ -1290,6 +1290,7 @@ function createRuntime(
   } = {},
 ) {
   const runtime = {
+    prepareImageUpdateCheck: vi.fn<() => Promise<void>>(),
     getRunningImageDigest:
       vi.fn<(mcpServerId: string) => Promise<string | null>>(),
     resolveAvailableImageDigest:
@@ -1299,6 +1300,8 @@ function createRuntime(
         ) => Promise<string | null>
       >(),
   } satisfies ImageUpdateRuntime;
+
+  runtime.prepareImageUpdateCheck.mockResolvedValue(undefined);
 
   const runningDigest = options.runningDigest ?? "sha256:running";
   if (runningDigest instanceof Error) {

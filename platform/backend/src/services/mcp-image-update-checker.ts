@@ -52,6 +52,8 @@ export class McpImageUpdateCheckerService {
       return;
     }
 
+    await this.prepareImageUpdateCheck();
+
     const eligibleServers =
       await McpServerModel.findLocalServersEligibleForImageUpdateCheck(
         parsedPayload.mcpServerId,
@@ -349,6 +351,14 @@ export class McpImageUpdateCheckerService {
   }
 
   // ===== Private methods =====
+
+  private async prepareImageUpdateCheck(): Promise<void> {
+    try {
+      await this.runtime.prepareImageUpdateCheck();
+    } catch (error) {
+      logger.warn({ err: error }, "Failed to prepare MCP image update check");
+    }
+  }
 
   private async processEligibleServer(params: {
     eligibleServer: LocalMcpServerImageUpdateCandidate;

@@ -12,6 +12,10 @@ import {
 } from "@/models";
 import { secretManager } from "@/secrets-manager";
 import type { McpServer } from "@/types";
+import {
+  type ImageDigestProbe,
+  K8sImageDigestProbe,
+} from "./image-digest-probe";
 import { resolveMcpImagePullSecretNames } from "./image-pull-secrets";
 import type {
   ImageUpdateRuntime,
@@ -38,6 +42,7 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
   private k8sAttach?: k8s.Attach;
   private k8sLog?: k8s.Log;
   private k8sExec?: k8s.Exec;
+  private imageDigestProbe?: ImageDigestProbe;
   private namespace: string = "default";
   private mcpServerIdToDeploymentMap: Map<string, K8sDeployment> = new Map();
   private status: K8sRuntimeStatus = "not_initialized";
@@ -57,6 +62,10 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
       this.k8sExec = clients.exec;
       this.k8sLog = clients.log;
       this.namespace = clients.namespace;
+      this.imageDigestProbe = new K8sImageDigestProbe(
+        clients.coreApi,
+        clients.namespace,
+      );
     } catch (error) {
       logger.error({ err: error }, "Failed to load Kubernetes config");
       this.status = "error";
@@ -64,6 +73,7 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
       this.k8sAppsApi = undefined;
       this.k8sAttach = undefined;
       this.k8sLog = undefined;
+      this.imageDigestProbe = undefined;
       this.namespace = "";
       return; // graceful fallback: constructor completes with runtime disabled
     }
@@ -292,6 +302,7 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
         userConfigValues,
         environmentValues: effectiveEnvironmentValues,
         k8sExec: this.k8sExec,
+        imageDigestProbe: this.imageDigestProbe,
       });
 
       // Register the deployment BEFORE starting it
@@ -454,6 +465,7 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
         namespace: this.namespace,
         catalogItem,
         k8sExec: this.k8sExec,
+        imageDigestProbe: this.imageDigestProbe,
       });
 
       // Resolve HTTP endpoint URL (for streamable-http servers started by another replica)
@@ -679,6 +691,13 @@ export class McpServerRuntimeManager implements ImageUpdateRuntime {
       return false;
     }
     return k8sDeployment.hasRunningPod();
+  }
+
+  /**
+   * Run runtime preparation before MCP image update checks start.
+   */
+  async prepareImageUpdateCheck(): Promise<void> {
+    await this.imageDigestProbe?.cleanupStaleProbePods();
   }
 
   /**

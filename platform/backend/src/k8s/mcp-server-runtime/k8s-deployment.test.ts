@@ -8,10 +8,7 @@ import config from "@/config";
 import logger from "@/logging";
 import { describe, expect, test } from "@/test";
 import type { McpServer } from "@/types";
-import {
-  type ImageDigestProbe,
-  K8sImageDigestProbe,
-} from "./image-digest-probe";
+import type { ImageDigestProbe } from "./image-digest-probe";
 import K8sDeployment, {
   fetchPlatformPodNodeSelector,
   fetchPlatformPodTolerations,
@@ -4520,87 +4517,6 @@ describe("K8sDeployment.getRunningImageDigest", () => {
   });
 });
 
-describe("K8sImageDigestProbe.generatePodSpec", () => {
-  test("generates a short-lived probe pod for a tag-based image", () => {
-    const mcpServer = {
-      id: "server-123",
-      name: "Probe Server",
-    } as unknown as McpServer;
-
-    const pod = K8sImageDigestProbe.generatePodSpec({
-      image: "ghcr.io/example/mcp-server:1.2.3",
-      podName: "mcp-image-probe-server-123-abc123-def456",
-      namespace: "archestra-runtime",
-      mcpServer,
-      imagePullSecrets: [{ name: "registry-secret" }],
-      nodeSelector: { "node-pool": "mcp" },
-      tolerations: [
-        {
-          key: "workload",
-          operator: "Equal",
-          value: "mcp",
-          effect: "NoSchedule",
-        },
-      ],
-      serviceAccountName: "mcp-runner",
-      activeDeadlineSeconds: 65,
-    });
-
-    expect(pod.metadata).toMatchObject({
-      name: "mcp-image-probe-server-123-abc123-def456",
-      namespace: "archestra-runtime",
-      labels: {
-        app: "mcp-image-digest-probe",
-        "mcp-server-probe-id": "server-123",
-        "mcp-server-name": "probe-server",
-      },
-    });
-    expect(pod.metadata?.labels?.["mcp-server-id"]).toBeUndefined();
-    expect(pod.spec).toMatchObject({
-      restartPolicy: "Never",
-      terminationGracePeriodSeconds: 0,
-      enableServiceLinks: false,
-      automountServiceAccountToken: false,
-      activeDeadlineSeconds: 65,
-      serviceAccountName: "mcp-runner",
-      imagePullSecrets: [{ name: "registry-secret" }],
-      nodeSelector: { "node-pool": "mcp" },
-      tolerations: [
-        {
-          key: "workload",
-          operator: "Equal",
-          value: "mcp",
-          effect: "NoSchedule",
-        },
-      ],
-    });
-    expect(pod.spec?.containers).toEqual([
-      expect.objectContaining({
-        name: "mcp-image-digest-probe",
-        image: "ghcr.io/example/mcp-server:1.2.3",
-        command: ["/bin/true"],
-        imagePullPolicy: "Always",
-      }),
-    ]);
-  });
-
-  test("does not force Always pull policy for digest-pinned images", () => {
-    const mcpServer = {
-      id: "server-123",
-      name: "Probe Server",
-    } as unknown as McpServer;
-
-    const pod = K8sImageDigestProbe.generatePodSpec({
-      image: "ghcr.io/example/mcp-server@sha256:abc123",
-      podName: "mcp-image-probe-server-123-abc123-def456",
-      namespace: "archestra-runtime",
-      mcpServer,
-    });
-
-    expect(pod.spec?.containers[0].imagePullPolicy).toBeUndefined();
-  });
-});
-
 describe("K8sDeployment.resolveAvailableImageDigest", () => {
   function createProbeDeployment(options?: {
     readPod?: k8s.V1Pod;
@@ -4691,7 +4607,10 @@ describe("K8sDeployment.resolveAvailableImageDigest", () => {
     const resolveAvailableImageDigest = vi
       .fn<ImageDigestProbe["resolveAvailableImageDigest"]>()
       .mockResolvedValue("sha256:delegated");
-    const imageDigestProbe = { resolveAvailableImageDigest };
+    const imageDigestProbe = {
+      resolveAvailableImageDigest,
+      cleanupStaleProbePods: vi.fn<ImageDigestProbe["cleanupStaleProbePods"]>(),
+    } satisfies ImageDigestProbe;
     const { deployment, createNamespacedPod, readNamespacedDeployment } =
       createProbeDeployment({
         imageDigestProbe,

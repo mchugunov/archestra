@@ -7,6 +7,8 @@ export type ResolveAvailableImageDigestRuntimeParams = {
 };
 
 export interface ImageUpdateRuntime {
+  prepareImageUpdateCheck(): Promise<void>;
+
   getRunningImageDigest(mcpServerId: string): Promise<string | null>;
 
   resolveAvailableImageDigest(

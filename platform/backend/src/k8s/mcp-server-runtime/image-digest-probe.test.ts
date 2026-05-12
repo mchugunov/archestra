@@ -26,33 +26,36 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("K8sImageDigestProbe.generatePodSpec", () => {
-  test("generates a short-lived probe pod for a tag-based image", () => {
-    const pod = K8sImageDigestProbe.generatePodSpec({
-      image: "ghcr.io/example/mcp-server:1.2.3",
-      podName: "mcp-image-probe-server-123-abc123-def456",
-      namespace: "archestra-runtime",
+describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
+  test("generates a short-lived probe pod for a tag-based image", async () => {
+    const { resolveAvailableImageDigest, k8sApi } = createProbe({
       mcpServer: createMcpServer({
         id: "server-123",
         name: "Probe Server",
       }),
-      imagePullSecrets: [{ name: "registry-secret" }],
-      nodeSelector: { "node-pool": "mcp" },
-      tolerations: [
-        {
-          key: "workload",
-          operator: "Equal",
-          value: "mcp",
-          effect: "NoSchedule",
-        },
-      ],
-      serviceAccountName: "mcp-runner",
-      runtimeClassName: "mcp-runtime",
-      activeDeadlineSeconds: 65,
     });
 
+    await expect(
+      resolveAvailableImageDigest({
+        image: "ghcr.io/example/mcp-server:1.2.3",
+        imagePullSecrets: [{ name: "registry-secret" }],
+        nodeSelector: { "node-pool": "mcp" },
+        tolerations: [
+          {
+            key: "workload",
+            operator: "Equal",
+            value: "mcp",
+            effect: "NoSchedule",
+          },
+        ],
+        serviceAccountName: "mcp-runner",
+        runtimeClassName: "mcp-runtime",
+        timeoutMs: 60_000,
+      }),
+    ).resolves.toBe("sha256:abc123");
+
+    const pod = k8sApi.createNamespacedPod.mock.calls[0]?.[0].body;
     expect(pod.metadata).toMatchObject({
-      name: "mcp-image-probe-server-123-abc123-def456",
       namespace: "archestra-runtime",
       labels: {
         app: "mcp-image-digest-probe",
@@ -60,6 +63,9 @@ describe("K8sImageDigestProbe.generatePodSpec", () => {
         "mcp-server-name": "probe-server",
       },
     });
+    expect(pod.metadata?.name).toMatch(
+      /^mcp-image-probe-server-123-[a-f0-9]{12}-/,
+    );
     expect(pod.metadata?.labels?.["mcp-server-id"]).toBeUndefined();
     expect(pod.spec).toMatchObject({
       restartPolicy: "Never",
@@ -90,22 +96,23 @@ describe("K8sImageDigestProbe.generatePodSpec", () => {
     ]);
   });
 
-  test("omits optional pod fields and pull policy for digest-pinned images", () => {
-    const pod = K8sImageDigestProbe.generatePodSpec({
-      image: "ghcr.io/example/mcp-server@sha256:abc123",
-      podName: "mcp-image-probe-server-123-abc123-def456",
-      namespace: "archestra-runtime",
-      mcpServer: createMcpServer({
-        id: "server-123",
-        name: "Probe Server",
-      }),
-      imagePullSecrets: [],
-      nodeSelector: {},
-      tolerations: [],
-      serviceAccountName: null,
-      activeDeadlineSeconds: 0,
-    });
+  test("omits optional pod fields and pull policy for digest-pinned images", async () => {
+    const { resolveAvailableImageDigest, k8sApi } = createProbe();
 
+    await expect(
+      resolveAvailableImageDigest({
+        image: "ghcr.io/example/mcp-server@sha256:abc123",
+        imagePullSecrets: [],
+        nodeSelector: {},
+        tolerations: [],
+        serviceAccountName: null,
+        runtimeClassName: null,
+        timeoutMs: -5_000,
+        pollIntervalMs: 0,
+      }),
+    ).resolves.toBe("sha256:abc123");
+
+    const pod = k8sApi.createNamespacedPod.mock.calls[0]?.[0].body;
     expect(pod.spec?.activeDeadlineSeconds).toBeUndefined();
     expect(pod.spec?.serviceAccountName).toBeUndefined();
     expect(pod.spec?.imagePullSecrets).toBeUndefined();
@@ -115,31 +122,28 @@ describe("K8sImageDigestProbe.generatePodSpec", () => {
     expect(pod.spec?.containers[0].imagePullPolicy).toBeUndefined();
   });
 
-  test("does not include workload-only pod fields", () => {
-    const pod = K8sImageDigestProbe.generatePodSpec({
-      image: "ghcr.io/example/mcp-server:1.2.3",
-      podName: "mcp-image-probe-server-123-abc123-def456",
-      namespace: "archestra-runtime",
-      mcpServer: createMcpServer({
-        id: "server-123",
-        name: "Probe Server",
-      }),
-    });
+  test("does not include workload-only pod fields", async () => {
+    const { resolveAvailableImageDigest, k8sApi } = createProbe();
 
+    await expect(
+      resolveAvailableImageDigest({
+        image: "ghcr.io/example/mcp-server:1.2.3",
+      }),
+    ).resolves.toBe("sha256:abc123");
+
+    const pod = k8sApi.createNamespacedPod.mock.calls[0]?.[0].body;
     expect(pod.spec?.volumes).toBeUndefined();
     expect(pod.spec?.containers[0].env).toBeUndefined();
     expect(pod.spec?.containers[0].envFrom).toBeUndefined();
     expect(pod.spec?.containers[0].volumeMounts).toBeUndefined();
     expect(pod.spec?.containers[0].ports).toBeUndefined();
   });
-});
 
-describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
   test("creates a probe pod, reads the resolved digest, and deletes the pod", async () => {
-    const { probe, k8sApi } = createProbe();
+    const { resolveAvailableImageDigest, k8sApi } = createProbe();
 
     await expect(
-      probe.resolveAvailableImageDigest({
+      resolveAvailableImageDigest({
         image: "ghcr.io/example/server:latest",
         imagePullSecrets: [{ name: "registry-secret" }],
         nodeSelector: { "node-pool": "mcp" },
@@ -179,12 +183,12 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
   });
 
   test("uses server fallback in probe pod name when server ID sanitizes to empty", async () => {
-    const { probe, k8sApi } = createProbe({
+    const { resolveAvailableImageDigest, k8sApi } = createProbe({
       mcpServer: createMcpServer({ id: "!!!", name: "Probe Server" }),
     });
 
     await expect(
-      probe.resolveAvailableImageDigest({
+      resolveAvailableImageDigest({
         image: "ghcr.io/example/server:latest",
       }),
     ).resolves.toBe("sha256:abc123");
@@ -195,7 +199,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
   });
 
   test("polls until the probe pod image ID is available", async () => {
-    const { probe, k8sApi } = createProbe({
+    const { resolveAvailableImageDigest, k8sApi } = createProbe({
       readPods: [
         createProbePod({
           containerStatus: {
@@ -209,9 +213,9 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
     });
 
     await expect(
-      probe.resolveAvailableImageDigest({
+      resolveAvailableImageDigest({
         image: "ghcr.io/example/server:latest",
-        timeoutMs: 20,
+        timeoutMs: 1_000,
         pollIntervalMs: 0,
       }),
     ).resolves.toBe("sha256:def456");
@@ -225,7 +229,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
   });
 
   test("times out when the probe pod never exposes an image ID", async () => {
-    const { probe, k8sApi } = createProbe({
+    const { resolveAvailableImageDigest, k8sApi } = createProbe({
       readPods: [
         createProbePod({
           containerStatus: {
@@ -236,7 +240,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
     });
 
     await expect(
-      probe.resolveAvailableImageDigest({
+      resolveAvailableImageDigest({
         image: "ghcr.io/example/server:latest",
         timeoutMs: -1,
         pollIntervalMs: 0,
@@ -249,7 +253,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
   });
 
   test("ignores non-terminal waiting reasons until timeout", async () => {
-    const { probe } = createProbe({
+    const { resolveAvailableImageDigest } = createProbe({
       readPods: [
         createProbePod({
           containerStatus: {
@@ -265,7 +269,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
     });
 
     await expect(
-      probe.resolveAvailableImageDigest({
+      resolveAvailableImageDigest({
         image: "ghcr.io/example/server:latest",
         timeoutMs: -1,
         pollIntervalMs: 0,
@@ -276,7 +280,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
   });
 
   test("fails fast when Kubernetes reports an image pull failure with details", async () => {
-    const { probe, k8sApi } = createProbe({
+    const { resolveAvailableImageDigest, k8sApi } = createProbe({
       readPods: [
         createProbePod({
           containerStatus: {
@@ -293,7 +297,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
     });
 
     await expect(
-      probe.resolveAvailableImageDigest({
+      resolveAvailableImageDigest({
         image: "ghcr.io/example/private-server:latest",
         timeoutMs: 20,
         pollIntervalMs: 0,
@@ -304,7 +308,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
   });
 
   test("fails fast when Kubernetes reports an image pull failure without details", async () => {
-    const { probe } = createProbe({
+    const { resolveAvailableImageDigest } = createProbe({
       readPods: [
         createProbePod({
           containerStatus: {
@@ -320,7 +324,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
     });
 
     await expect(
-      probe.resolveAvailableImageDigest({
+      resolveAvailableImageDigest({
         image: "ghcr.io/example/private-server:latest",
         timeoutMs: 20,
         pollIntervalMs: 0,
@@ -331,7 +335,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
   });
 
   test("fails when the probe pod image ID does not contain a digest", async () => {
-    const { probe, k8sApi } = createProbe({
+    const { resolveAvailableImageDigest, k8sApi } = createProbe({
       readPods: [
         createProbePod({
           imageID: "repo/name:latest",
@@ -340,7 +344,7 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
     });
 
     await expect(
-      probe.resolveAvailableImageDigest({
+      resolveAvailableImageDigest({
         image: "ghcr.io/example/server:latest",
       }),
     ).rejects.toThrow(
@@ -351,12 +355,12 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
   });
 
   test("logs debug when cleanup finds the probe pod already deleted", async () => {
-    const { probe } = createProbe({
+    const { resolveAvailableImageDigest } = createProbe({
       deleteError: { statusCode: 404, message: "Pod not found" },
     });
 
     await expect(
-      probe.resolveAvailableImageDigest({
+      resolveAvailableImageDigest({
         image: "ghcr.io/example/server:latest",
       }),
     ).resolves.toBe("sha256:abc123");
@@ -373,12 +377,12 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
 
   test("logs cleanup failure without masking a resolved digest", async () => {
     const cleanupError = new Error("delete failed");
-    const { probe } = createProbe({
+    const { resolveAvailableImageDigest } = createProbe({
       deleteError: cleanupError,
     });
 
     await expect(
-      probe.resolveAvailableImageDigest({
+      resolveAvailableImageDigest({
         image: "ghcr.io/example/server:latest",
       }),
     ).resolves.toBe("sha256:abc123");
@@ -395,17 +399,146 @@ describe("K8sImageDigestProbe.resolveAvailableImageDigest", () => {
 
   test("propagates probe pod creation failures without attempting cleanup", async () => {
     const createError = new Error("create failed");
-    const { probe, k8sApi } = createProbe({
+    const { resolveAvailableImageDigest, k8sApi } = createProbe({
       createError,
     });
 
     await expect(
-      probe.resolveAvailableImageDigest({
+      resolveAvailableImageDigest({
         image: "ghcr.io/example/server:latest",
       }),
     ).rejects.toThrow("create failed");
 
     expect(k8sApi.deleteNamespacedPod).not.toHaveBeenCalled();
+  });
+});
+
+describe("K8sImageDigestProbe.cleanupStaleProbePods", () => {
+  test("deletes probe pods older than the default stale TTL", async () => {
+    const { probe, k8sApi } = createCleanupProbe({
+      pods: [
+        createCleanupPod("stale-probe", "2000-01-01T00:00:00.000Z"),
+        createCleanupPod("recent-probe", new Date().toISOString()),
+      ],
+    });
+
+    await probe.cleanupStaleProbePods();
+
+    expect(k8sApi.listNamespacedPod).toHaveBeenCalledWith({
+      namespace: "archestra-runtime",
+      labelSelector: "app=mcp-image-digest-probe",
+    });
+    expect(k8sApi.deleteNamespacedPod).toHaveBeenCalledTimes(1);
+    expect(k8sApi.deleteNamespacedPod).toHaveBeenCalledWith({
+      name: "stale-probe",
+      namespace: "archestra-runtime",
+    });
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        podName: "stale-probe",
+        namespace: "archestra-runtime",
+      }),
+      "Deleted stale MCP image digest probe pod",
+    );
+  });
+
+  test("keeps pods newer than the default stale TTL", async () => {
+    const { probe, k8sApi } = createCleanupProbe({
+      pods: [createCleanupPod("recent-probe", new Date().toISOString())],
+    });
+
+    await probe.cleanupStaleProbePods();
+
+    expect(k8sApi.deleteNamespacedPod).not.toHaveBeenCalled();
+  });
+
+  test("skips pods without names or creation timestamps", async () => {
+    const { probe, k8sApi } = createCleanupProbe({
+      pods: [
+        { metadata: { creationTimestamp: new Date("2026-01-01T00:00:00Z") } },
+        { metadata: { name: "missing-created-at" } },
+        {
+          metadata: {
+            name: "invalid-created-at",
+            creationTimestamp: "not-a-date" as unknown as Date,
+          },
+        },
+      ] as k8s.V1Pod[],
+    });
+
+    await probe.cleanupStaleProbePods();
+
+    expect(k8sApi.deleteNamespacedPod).not.toHaveBeenCalled();
+  });
+
+  test("continues cleanup when a stale pod was already deleted", async () => {
+    const deleteNamespacedPod = vi
+      .fn()
+      .mockRejectedValueOnce({ statusCode: 404 })
+      .mockResolvedValueOnce({});
+    const { probe, k8sApi } = createCleanupProbe({
+      pods: [
+        createCleanupPod("already-deleted-probe", "2000-01-01T00:00:00.000Z"),
+        createCleanupPod("other-stale-probe", "2000-01-01T00:00:00.000Z"),
+      ],
+      deleteNamespacedPod,
+    });
+
+    await probe.cleanupStaleProbePods();
+
+    expect(k8sApi.deleteNamespacedPod).toHaveBeenCalledTimes(2);
+    expect(logger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({
+        podName: "already-deleted-probe",
+        namespace: "archestra-runtime",
+      }),
+      "MCP image digest probe pod was already deleted",
+    );
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  test("logs list failures without throwing", async () => {
+    const listError = new Error("list failed");
+    const { probe, k8sApi } = createCleanupProbe({ listError });
+
+    await expect(probe.cleanupStaleProbePods()).resolves.toBeUndefined();
+
+    expect(k8sApi.deleteNamespacedPod).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: listError,
+        namespace: "archestra-runtime",
+        labelSelector: "app=mcp-image-digest-probe",
+      }),
+      "Failed to list stale MCP image digest probe pods",
+    );
+  });
+
+  test("logs delete failures and continues with later stale pods", async () => {
+    const deleteError = new Error("delete failed");
+    const deleteNamespacedPod = vi
+      .fn()
+      .mockRejectedValueOnce(deleteError)
+      .mockResolvedValueOnce({});
+    const { probe, k8sApi } = createCleanupProbe({
+      pods: [
+        createCleanupPod("failing-delete-probe", "2000-01-01T00:00:00.000Z"),
+        createCleanupPod("successful-delete-probe", "2000-01-01T00:00:00.000Z"),
+      ],
+      deleteNamespacedPod,
+    });
+
+    await probe.cleanupStaleProbePods();
+
+    expect(k8sApi.deleteNamespacedPod).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: deleteError,
+        podName: "failing-delete-probe",
+        namespace: "archestra-runtime",
+      }),
+      "Failed to delete MCP image digest probe pod",
+    );
   });
 });
 
@@ -443,16 +576,69 @@ function createProbe(
     readNamespacedPod,
     deleteNamespacedPod,
   };
+  const probe = new K8sImageDigestProbe(
+    k8sApi as unknown as k8s.CoreV1Api,
+    "archestra-runtime",
+  );
+  const resolveAvailableImageDigest = (
+    resolveOptions: ResolveDigestOptions,
+  ) => {
+    const { mcpServer: overrideMcpServer, ...rest } = resolveOptions;
+    return probe.resolveAvailableImageDigest({
+      mcpServer: overrideMcpServer ?? mcpServer,
+      ...rest,
+    });
+  };
 
   return {
-    probe: new K8sImageDigestProbe({
-      k8sApi: k8sApi as unknown as k8s.CoreV1Api,
-      namespace: "archestra-runtime",
-      mcpServer,
-    }),
+    probe,
+    resolveAvailableImageDigest,
+    k8sApi,
+    mcpServer,
+  };
+}
+
+function createCleanupProbe(
+  options: {
+    pods?: k8s.V1Pod[];
+    listError?: unknown;
+    deleteNamespacedPod?: ReturnType<typeof vi.fn>;
+  } = {},
+) {
+  const listNamespacedPod = options.listError
+    ? vi.fn().mockRejectedValue(options.listError)
+    : vi.fn().mockResolvedValue({ items: options.pods ?? [] });
+  const deleteNamespacedPod =
+    options.deleteNamespacedPod ?? vi.fn().mockResolvedValue({});
+  const k8sApi = {
+    listNamespacedPod,
+    deleteNamespacedPod,
+  };
+
+  return {
+    probe: new K8sImageDigestProbe(
+      k8sApi as unknown as k8s.CoreV1Api,
+      "archestra-runtime",
+    ),
     k8sApi,
   };
 }
+
+function createCleanupPod(name: string, createdAt: string): k8s.V1Pod {
+  return {
+    metadata: {
+      name,
+      creationTimestamp: new Date(createdAt),
+    },
+  } as k8s.V1Pod;
+}
+
+type ResolveDigestOptions = Omit<
+  Parameters<K8sImageDigestProbe["resolveAvailableImageDigest"]>[0],
+  "mcpServer"
+> & {
+  mcpServer?: McpServer;
+};
 
 function createProbePod(options: {
   imageID?: string;
