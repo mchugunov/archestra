@@ -738,11 +738,12 @@ describe("K8sDeployment.generateDeploymentSpec", () => {
     }
   });
 
-  test("generates deploymentSpec with custom Docker image", () => {
+  test("generates deploymentSpec with custom Docker image without forcing pull policy when image checks are disabled", () => {
     const mcpServer: McpServer = {
       id: "custom-image-id",
       name: "custom-image-server",
       catalogId: "catalog-custom",
+      imageUpdateCheckEnabled: false,
       // biome-ignore lint/suspicious/noExplicitAny: Mock data for testing
     } as any;
 
@@ -765,6 +766,31 @@ describe("K8sDeployment.generateDeploymentSpec", () => {
 
     const container = deploymentSpec.spec?.template.spec?.containers[0];
     expect(container?.image).toBe("ghcr.io/my-org/custom-mcp-server:v2.1.0");
+    expect(container?.imagePullPolicy).toBeUndefined();
+  });
+
+  test("uses Always imagePullPolicy for registry images when image checks are enabled", () => {
+    const mcpServer: McpServer = {
+      id: "custom-image-id",
+      name: "custom-image-server",
+      catalogId: "catalog-custom",
+      imageUpdateCheckEnabled: true,
+      // biome-ignore lint/suspicious/noExplicitAny: Mock data for testing
+    } as any;
+
+    const k8sDeployment = createMockK8sDeployment(mcpServer);
+
+    const deploymentSpec = k8sDeployment.generateDeploymentSpec(
+      "ghcr.io/my-org/custom-mcp-server:v2.1.0",
+      {
+        command: "python",
+        arguments: ["-m", "server"],
+      },
+      false,
+      8080,
+    );
+
+    const container = deploymentSpec.spec?.template.spec?.containers[0];
     expect(container?.imagePullPolicy).toBe("Always");
   });
 

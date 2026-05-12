@@ -833,9 +833,10 @@ export default class K8sDeployment {
         {
           name: "mcp-server",
           image: dockerImage,
-          // Registry tags must pull on rollout restart; local images keep Never.
-          imagePullPolicy:
-            K8sDeployment.getDeploymentImagePullPolicy(dockerImage),
+          imagePullPolicy: K8sDeployment.getDeploymentImagePullPolicy(
+            dockerImage,
+            this.mcpServer.imageUpdateCheckEnabled,
+          ),
           env: envVars,
           // Inject all keys from existing K8s Secrets/ConfigMaps as env vars
           ...(localConfig.envFrom?.length
@@ -3003,15 +3004,16 @@ export default class K8sDeployment {
 
   private static getDeploymentImagePullPolicy(
     image: string,
+    imageUpdateCheckEnabled: boolean,
   ): k8s.V1Container["imagePullPolicy"] | undefined {
     if (isDigestPinnedImage(image)) {
       return undefined;
     }
 
-    if (image.includes("/") || image.includes(".")) {
-      return "Always";
+    if (!(image.includes("/") || image.includes("."))) {
+      return "Never";
     }
 
-    return "Never";
+    return imageUpdateCheckEnabled ? "Always" : undefined;
   }
 }

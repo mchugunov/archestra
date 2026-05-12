@@ -54,7 +54,7 @@ const mcpServerTable = pgTable(
     reinstallRequired: boolean("reinstall_required").notNull().default(false),
     imageUpdateCheckEnabled: boolean("image_update_check_enabled")
       .notNull()
-      .default(true),
+      .default(false),
     imageUpdateAutoRestartEnabled: boolean("image_update_auto_restart_enabled")
       .notNull()
       .default(true),
