@@ -38,7 +38,7 @@ export function McpImageUpdateSettings({
   );
 
   return (
-    <div className="space-y-4 rounded-lg border p-4">
+    <div className="space-y-3">
       {variant !== "local" && (
         <UnavailableState message="Image update checks are available for local MCP server deployments only." />
       )}
@@ -54,7 +54,7 @@ export function McpImageUpdateSettings({
             className={index === 0 ? "space-y-4" : "space-y-4 border-t pt-4"}
           >
             <div className="flex items-center justify-between gap-4">
-              <Label>Image status</Label>
+              <h3 className="font-semibold text-base">Image update state</h3>
               <ImageUpdateStatusBadge
                 status={server.imageUpdateState?.status}
               />
