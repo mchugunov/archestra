@@ -766,7 +766,7 @@ describe("K8sDeployment.generateDeploymentSpec", () => {
     expect(container?.imagePullPolicy).toBeUndefined();
   });
 
-  test("uses Always imagePullPolicy for registry images when image checks are enabled", () => {
+  test("does not force imagePullPolicy for registry images when image checks are enabled", () => {
     const mcpServer: McpServer = {
       id: "custom-image-id",
       name: "custom-image-server",
@@ -788,7 +788,7 @@ describe("K8sDeployment.generateDeploymentSpec", () => {
     );
 
     const container = deploymentSpec.spec?.template.spec?.containers[0];
-    expect(container?.imagePullPolicy).toBe("Always");
+    expect(container?.imagePullPolicy).toBeUndefined();
   });
 
   test("does not force imagePullPolicy for digest-pinned deployment images", () => {

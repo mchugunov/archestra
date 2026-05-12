@@ -829,10 +829,8 @@ export default class K8sDeployment {
         {
           name: "mcp-server",
           image: dockerImage,
-          imagePullPolicy: K8sDeployment.getDeploymentImagePullPolicy(
-            dockerImage,
-            this.mcpServer.imageUpdateCheckEnabled,
-          ),
+          imagePullPolicy:
+            K8sDeployment.getDeploymentImagePullPolicy(dockerImage),
           env: envVars,
           // Inject all keys from existing K8s Secrets/ConfigMaps as env vars
           ...(localConfig.envFrom?.length
@@ -3001,7 +2999,6 @@ export default class K8sDeployment {
 
   private static getDeploymentImagePullPolicy(
     image: string,
-    imageUpdateCheckEnabled: boolean,
   ): k8s.V1Container["imagePullPolicy"] | undefined {
     if (isDigestPinnedImage(image)) {
       return undefined;
@@ -3011,6 +3008,6 @@ export default class K8sDeployment {
       return "Never";
     }
 
-    return imageUpdateCheckEnabled ? "Always" : undefined;
+    return undefined;
   }
 }
