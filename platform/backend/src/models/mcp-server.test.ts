@@ -6,7 +6,7 @@ import McpServerUserModel from "./mcp-server-user";
 
 describe("McpServerModel", () => {
   describe("image update defaults", () => {
-    test("new MCP server rows default image update checks to disabled and auto-restart to enabled", async ({
+    test("new MCP server rows default image update checks and auto-restart to enabled", async ({
       makeInternalMcpCatalog,
     }) => {
       const catalog = await makeInternalMcpCatalog({
@@ -25,11 +25,11 @@ describe("McpServerModel", () => {
         })
         .returning();
 
-      expect(server.imageUpdateCheckEnabled).toBe(false);
+      expect(server.imageUpdateCheckEnabled).toBe(true);
       expect(server.imageUpdateAutoRestartEnabled).toBe(true);
 
       const foundServer = await McpServerModel.findById(server.id);
-      expect(foundServer?.imageUpdateCheckEnabled).toBe(false);
+      expect(foundServer?.imageUpdateCheckEnabled).toBe(true);
       expect(foundServer?.imageUpdateAutoRestartEnabled).toBe(true);
     });
   });
