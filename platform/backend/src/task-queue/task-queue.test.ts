@@ -30,6 +30,9 @@ vi.mock("@/config", () => ({
       taskWorkerMaxConcurrent: 2,
       taskWorkerShutdownTimeoutSeconds: 5,
     },
+    orchestrator: {
+      imageUpdateCheckIntervalSeconds: 900,
+    },
   },
 }));
 
@@ -332,9 +335,20 @@ describe("TaskQueueService", () => {
       expect(mockHasPendingOrProcessingByType).toHaveBeenCalledWith(
         "check_due_connectors",
       );
+      expect(mockHasPendingOrProcessingByType).toHaveBeenCalledWith(
+        "check_mcp_image_updates",
+      );
       expect(mockCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           taskType: "check_due_connectors",
+          payload: {},
+          maxAttempts: 1,
+          periodic: true,
+        }),
+      );
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskType: "check_mcp_image_updates",
           payload: {},
           maxAttempts: 1,
           periodic: true,

@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import mcpClient from "@/clients/mcp-client";
 import db, { schema } from "@/database";
@@ -8,10 +8,12 @@ import { secretManager } from "@/secrets-manager";
 import { computeSecretStorageType } from "@/secrets-manager/utils";
 import type {
   InsertMcpServer,
+  InternalMcpCatalog,
   McpServer,
   ResourceVisibilityScope,
   UpdateMcpServer,
 } from "@/types";
+import { IMAGE_UPDATE_ELIGIBLE_LOCAL_INSTALLATION_STATUSES } from "@/types";
 import AgentToolModel from "./agent-tool";
 import InternalMcpCatalogModel from "./internal-mcp-catalog";
 import McpHttpSessionModel from "./mcp-http-session";
@@ -20,6 +22,11 @@ import ToolModel from "./tool";
 
 // Alias for users table to avoid conflict with the owner LEFT JOIN
 const assignedUsersTable = alias(schema.usersTable, "assigned_users");
+
+export type LocalMcpServerImageUpdateCandidate = {
+  server: McpServer;
+  catalog: InternalMcpCatalog;
+};
 
 class McpServerModel {
   /**
@@ -179,6 +186,7 @@ class McpServerModel {
         teamName: schema.teamsTable.name,
         secretIsVault: schema.secretsTable.isVault,
         secretIsByosVault: schema.secretsTable.isByosVault,
+        imageUpdateState: schema.mcpServerImageUpdateStatesTable,
         assignedUserId: schema.mcpServerUsersTable.userId,
         assignedUserEmail: assignedUsersTable.email,
         assignedUserCreatedAt: schema.mcpServerUsersTable.createdAt,
@@ -199,6 +207,13 @@ class McpServerModel {
       .leftJoin(
         schema.secretsTable,
         eq(schema.mcpServersTable.secretId, schema.secretsTable.id),
+      )
+      .leftJoin(
+        schema.mcpServerImageUpdateStatesTable,
+        eq(
+          schema.mcpServersTable.id,
+          schema.mcpServerImageUpdateStatesTable.mcpServerId,
+        ),
       )
       .leftJoin(
         schema.mcpServerUsersTable,
@@ -272,6 +287,7 @@ class McpServerModel {
           userDetails: [],
           teamDetails,
           secretStorageType,
+          imageUpdateState: row.imageUpdateState,
         });
       }
 
@@ -318,6 +334,7 @@ class McpServerModel {
         teamName: schema.teamsTable.name,
         secretIsVault: schema.secretsTable.isVault,
         secretIsByosVault: schema.secretsTable.isByosVault,
+        imageUpdateState: schema.mcpServerImageUpdateStatesTable,
       })
       .from(schema.mcpServersTable)
       .leftJoin(
@@ -331,6 +348,13 @@ class McpServerModel {
       .leftJoin(
         schema.secretsTable,
         eq(schema.mcpServersTable.secretId, schema.secretsTable.id),
+      )
+      .leftJoin(
+        schema.mcpServerImageUpdateStatesTable,
+        eq(
+          schema.mcpServersTable.id,
+          schema.mcpServerImageUpdateStatesTable.mcpServerId,
+        ),
       )
       .where(eq(schema.mcpServersTable.id, id));
 
@@ -363,6 +387,7 @@ class McpServerModel {
       userDetails,
       teamDetails,
       secretStorageType,
+      imageUpdateState: result.imageUpdateState,
     };
   }
 
@@ -379,6 +404,45 @@ class McpServerModel {
       .select()
       .from(schema.mcpServersTable)
       .where(inArray(schema.mcpServersTable.id, ids));
+  }
+
+  static async findLocalServersEligibleForImageUpdateCheck(
+    mcpServerId?: string,
+  ): Promise<LocalMcpServerImageUpdateCandidate[]> {
+    const results = await db
+      .select({
+        server: schema.mcpServersTable,
+        catalog: schema.internalMcpCatalogTable,
+      })
+      .from(schema.mcpServersTable)
+      .innerJoin(
+        schema.internalMcpCatalogTable,
+        eq(schema.mcpServersTable.catalogId, schema.internalMcpCatalogTable.id),
+      )
+      .where(
+        and(
+          eq(schema.mcpServersTable.serverType, "local"),
+          eq(schema.internalMcpCatalogTable.serverType, "local"),
+          eq(schema.mcpServersTable.imageUpdateCheckEnabled, true),
+          eq(schema.mcpServersTable.reinstallRequired, false),
+          inArray(
+            schema.mcpServersTable.localInstallationStatus,
+            IMAGE_UPDATE_ELIGIBLE_LOCAL_INSTALLATION_STATUSES,
+          ),
+          sql`${schema.internalMcpCatalogTable.localConfig}->>'dockerImage' IS NOT NULL`,
+          sql`btrim(${schema.internalMcpCatalogTable.localConfig}->>'dockerImage') <> ''`,
+          ...(mcpServerId ? [eq(schema.mcpServersTable.id, mcpServerId)] : []),
+        ),
+      );
+
+    return results.map(({ server, catalog }) => ({
+      server,
+      catalog: {
+        ...catalog,
+        labels: [],
+        teams: [],
+      },
+    }));
   }
 
   static async findByCatalogId(catalogId: string): Promise<McpServer[]> {

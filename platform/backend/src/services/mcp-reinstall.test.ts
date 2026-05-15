@@ -30,11 +30,37 @@ import { McpServerModel, ToolModel } from "@/models";
 import { beforeEach, describe, expect, test } from "@/test";
 import type { InternalMcpCatalog, McpServer } from "@/types";
 import {
+  autoReinstallLocalMcpServerAfterImageUpdate,
   autoReinstallServer,
   requiresNewUserInputForReinstall,
 } from "./mcp-reinstall";
 
 describe("mcp-reinstall", () => {
+  const createServer = (overrides: Partial<McpServer> = {}): McpServer =>
+    ({
+      id: "server-123",
+      name: "Test Server",
+      ownerId: "user-123",
+      catalogId: "catalog-123",
+      serverType: "local",
+      scope: "personal",
+      ...overrides,
+    }) as McpServer;
+
+  const createCatalog = (
+    overrides: Partial<InternalMcpCatalog> = {},
+  ): InternalMcpCatalog =>
+    ({
+      id: "catalog-123",
+      name: "Test Catalog",
+      serverType: "local",
+      localConfig: {
+        command: "npm",
+        arguments: ["start"],
+      },
+      ...overrides,
+    }) as InternalMcpCatalog;
+
   describe("requiresNewUserInputForReinstall", () => {
     // Helper to create a minimal local catalog item
     const createLocalCatalog = (
@@ -624,33 +650,6 @@ describe("mcp-reinstall", () => {
   });
 
   describe("autoReinstallServer", () => {
-    // Helper to create a minimal server
-    const createServer = (overrides: Partial<McpServer> = {}): McpServer =>
-      ({
-        id: "server-123",
-        name: "Test Server",
-        ownerId: "user-123",
-        catalogId: "catalog-123",
-        serverType: "local",
-        scope: "personal",
-        ...overrides,
-      }) as McpServer;
-
-    // Helper to create a minimal catalog item
-    const createCatalog = (
-      overrides: Partial<InternalMcpCatalog> = {},
-    ): InternalMcpCatalog =>
-      ({
-        id: "catalog-123",
-        name: "Test Catalog",
-        serverType: "local",
-        localConfig: {
-          command: "npm",
-          arguments: ["start"],
-        },
-        ...overrides,
-      }) as InternalMcpCatalog;
-
     beforeEach(() => {
       vi.clearAllMocks();
     });
@@ -664,7 +663,7 @@ describe("mcp-reinstall", () => {
       const catalog = createCatalog({ serverType: "local" });
 
       vi.mocked(McpServerRuntimeManager.restartServer).mockRejectedValue(
-        new Error("K8s deployment failed"),
+        new Error("K8s deployment failed token=super-secret-value"),
       );
 
       await expect(autoReinstallServer(server, catalog)).rejects.toThrow(
@@ -1016,6 +1015,95 @@ describe("mcp-reinstall", () => {
       expect(McpServerModel.update).toHaveBeenCalledWith(server.id, {
         reinstallRequired: false,
       });
+    });
+  });
+
+  describe("autoReinstallLocalMcpServerAfterImageUpdate", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    test("sets install status pending before reinstall and success after reinstall", async () => {
+      const server = createServer({
+        serverType: "local",
+        name: "Test Catalog-user-123",
+      });
+      const catalog = createCatalog({ serverType: "local" });
+
+      vi.mocked(McpServerRuntimeManager.restartServer).mockResolvedValue(
+        undefined,
+      );
+      vi.mocked(McpServerRuntimeManager.getOrLoadDeployment).mockResolvedValue({
+        waitForDeploymentReady: vi.fn().mockResolvedValue(undefined),
+      } as never);
+      vi.mocked(McpServerModel.getToolsFromServer).mockResolvedValue([
+        { name: "tool1", description: "First tool", inputSchema: {} },
+      ]);
+      vi.mocked(ToolModel.syncToolsForCatalog).mockResolvedValue({
+        created: [],
+        updated: [],
+        unchanged: [],
+        deleted: [],
+      } as never);
+      vi.mocked(McpServerModel.update).mockResolvedValue({} as McpServer);
+
+      await autoReinstallLocalMcpServerAfterImageUpdate({
+        server,
+        catalogItem: catalog,
+        runningImageDigest: "sha256:old",
+        availableImageDigest: "sha256:new",
+      });
+
+      expect(McpServerModel.update).toHaveBeenNthCalledWith(1, server.id, {
+        localInstallationStatus: "pending",
+        localInstallationError: null,
+      });
+      expect(McpServerModel.update).toHaveBeenCalledWith(server.id, {
+        reinstallRequired: false,
+      });
+      expect(McpServerModel.update).toHaveBeenLastCalledWith(server.id, {
+        localInstallationStatus: "success",
+        localInstallationError: null,
+      });
+      expect(ToolModel.syncToolsForCatalog).toHaveBeenCalledWith([
+        expect.objectContaining({
+          name: "Test Catalog__tool1",
+          catalogId: catalog.id,
+          rawToolName: "tool1",
+        }),
+      ]);
+    });
+
+    test("sets install status error when reinstall fails", async () => {
+      const server = createServer({
+        serverType: "local",
+        name: "Test Catalog-user-123",
+      });
+      const catalog = createCatalog({ serverType: "local" });
+
+      vi.mocked(McpServerRuntimeManager.restartServer).mockRejectedValue(
+        new Error("K8s deployment failed token=super-secret-value"),
+      );
+      vi.mocked(McpServerModel.update).mockResolvedValue({} as McpServer);
+
+      await expect(
+        autoReinstallLocalMcpServerAfterImageUpdate({
+          server,
+          catalogItem: catalog,
+          runningImageDigest: "sha256:old",
+          availableImageDigest: "sha256:new",
+        }),
+      ).rejects.toThrow("K8s deployment failed token=super-secret-value");
+
+      expect(McpServerModel.update).toHaveBeenNthCalledWith(1, server.id, {
+        localInstallationStatus: "pending",
+        localInstallationError: null,
+      });
+      expect(McpServerModel.update).toHaveBeenLastCalledWith(server.id, {
+        localInstallationStatus: "error",
+        localInstallationError: "K8s deployment failed token=[redacted]",
+      });
+      expect(ToolModel.syncToolsForCatalog).not.toHaveBeenCalled();
     });
   });
 });

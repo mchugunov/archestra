@@ -48,6 +48,8 @@ export { default as mcpCatalogLabelsTable } from "./mcp-catalog-label";
 export { default as mcpCatalogTeamsTable } from "./mcp-catalog-team";
 export { default as mcpHttpSessionsTable } from "./mcp-http-session";
 export { default as mcpServersTable } from "./mcp-server";
+export { default as mcpServerImageUpdateCheckLocksTable } from "./mcp-server-image-update-check-lock";
+export { default as mcpServerImageUpdateStatesTable } from "./mcp-server-image-update-state";
 export { default as mcpServerInstallationRequestsTable } from "./mcp-server-installation-request";
 export { default as mcpServerUsersTable } from "./mcp-server-user";
 export { default as mcpToolCallsTable } from "./mcp-tool-call";

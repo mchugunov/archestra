@@ -7,11 +7,19 @@ import {
 import { z } from "zod";
 import { schema } from "@/database";
 import { InternalMcpCatalogServerTypeSchema } from "./mcp-catalog";
+import { SelectMcpServerImageUpdateStateSchema } from "./mcp-server-image-update-state";
 import { ResourceVisibilityScopeSchema } from "./visibility";
 
 export const LocalMcpServerInstallationStatusSchema = z.enum(
   LOCAL_MCP_INSTALLATION_STATES,
 );
+
+export type LocalMcpServerInstallationStatus = z.infer<
+  typeof LocalMcpServerInstallationStatusSchema
+>;
+
+export const IMAGE_UPDATE_ELIGIBLE_LOCAL_INSTALLATION_STATUSES: readonly LocalMcpServerInstallationStatus[] =
+  ["success"];
 
 export const SecretStorageTypeSchema = z.enum([
   "vault",
@@ -49,6 +57,7 @@ export const SelectMcpServerSchema = createSelectSchema(
     .optional(),
   localInstallationStatus: LocalMcpServerInstallationStatusSchema,
   secretStorageType: SecretStorageTypeSchema.optional(),
+  imageUpdateState: SelectMcpServerImageUpdateStateSchema.nullable().optional(),
 });
 
 export const InsertMcpServerSchema = createInsertSchema(schema.mcpServersTable)
@@ -74,10 +83,6 @@ export const UpdateMcpServerSchema = createUpdateSchema(schema.mcpServersTable)
   .extend({
     localInstallationStatus: LocalMcpServerInstallationStatusSchema.optional(),
   });
-
-export type LocalMcpServerInstallationStatus = z.infer<
-  typeof LocalMcpServerInstallationStatusSchema
->;
 
 export type McpServer = z.infer<typeof SelectMcpServerSchema>;
 export type InsertMcpServer = z.infer<typeof InsertMcpServerSchema>;

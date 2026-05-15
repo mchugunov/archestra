@@ -945,6 +945,11 @@ The sandbox inherits origin restrictions from `ARCHESTRA_FRONTEND_URL` and `ARCH
   - Default: `europe-west1-docker.pkg.dev/friendly-path-465518-r6/archestra-public/mcp-server-base:0.0.3`
   - Can be overridden per individual MCP server.
 
+- **`ARCHESTRA_MCP_IMAGE_UPDATE_CHECK_INTERVAL_SECONDS`** - Global interval for checking installed MCP server container images for updates.
+  - Default: `900` seconds
+  - Minimum: `300` seconds. Lower values are clamped to `300`.
+  - Applies only to installed MCP servers with image update checks enabled.
+
 - **`ARCHESTRA_ORCHESTRATOR_LOAD_KUBECONFIG_FROM_CURRENT_CLUSTER`** - Use in-cluster config when running inside Kubernetes.
   - Default: `true`
   - Set to `false` when Archestra is deployed in the different cluster and specify the `ARCHESTRA_ORCHESTRATOR_KUBECONFIG`.

@@ -1,6 +1,7 @@
 import { McpServerRuntimeManager } from "@/k8s/mcp-server-runtime";
 import logger from "@/logging";
 import { McpServerModel, ToolModel } from "@/models";
+import { getImageUpdateErrorLogFields } from "@/services/mcp-image-update-error";
 import type { InternalMcpCatalog, LocalConfig, McpServer } from "@/types";
 
 /**
@@ -218,6 +219,56 @@ export async function autoReinstallServer(
   await McpServerModel.update(server.id, {
     reinstallRequired: false,
   });
+}
+
+export async function autoReinstallLocalMcpServerAfterImageUpdate(params: {
+  server: McpServer;
+  catalogItem: InternalMcpCatalog;
+  runningImageDigest: string;
+  availableImageDigest: string;
+}): Promise<void> {
+  const { availableImageDigest, catalogItem, runningImageDigest, server } =
+    params;
+  const logContext = {
+    mcpServerId: server.id,
+    catalogId: catalogItem.id,
+    catalogName: catalogItem.name,
+    runningImageDigest,
+    availableImageDigest,
+  };
+
+  logger.info(
+    logContext,
+    "Starting automatic MCP server reinstall after image update",
+  );
+
+  await McpServerModel.update(server.id, {
+    localInstallationStatus: "pending",
+    localInstallationError: null,
+  });
+
+  try {
+    await autoReinstallServer(server, catalogItem);
+    await McpServerModel.update(server.id, {
+      localInstallationStatus: "success",
+      localInstallationError: null,
+    });
+    logger.info(
+      logContext,
+      "Automatic MCP server reinstall after image update completed",
+    );
+  } catch (error) {
+    const errorFields = getImageUpdateErrorLogFields(error);
+    await McpServerModel.update(server.id, {
+      localInstallationStatus: "error",
+      localInstallationError: errorFields.errorMessage,
+    });
+    logger.error(
+      { ...logContext, ...errorFields },
+      "Failed automatic MCP server reinstall after image update",
+    );
+    throw error;
+  }
 }
 
 // ===== Internal helpers =====

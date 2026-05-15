@@ -523,6 +523,18 @@ export const requiredEndpointPermissionsMap: Partial<
   [RouteId.GetK8sImagePullSecrets]: {
     mcpRegistry: ["read"],
   },
+  [RouteId.GetCatalogChildren]: {
+    mcpRegistry: ["read"],
+  },
+  [RouteId.CreateCatalogChild]: {
+    mcpRegistry: ["create"],
+  },
+  [RouteId.UpdateCatalogChild]: {
+    mcpRegistry: ["update"],
+  },
+  [RouteId.DeleteCatalogChild]: {
+    mcpRegistry: ["delete"],
+  },
   [RouteId.GetMcpServers]: {
     mcpServerInstallation: ["read"],
   },
@@ -537,6 +549,9 @@ export const requiredEndpointPermissionsMap: Partial<
   },
   [RouteId.InstallMcpServer]: {
     mcpServerInstallation: ["create"],
+  },
+  [RouteId.UpdateMcpServer]: {
+    mcpServerInstallation: ["update"],
   },
   [RouteId.DeleteMcpServer]: {
     mcpServerInstallation: ["delete"],

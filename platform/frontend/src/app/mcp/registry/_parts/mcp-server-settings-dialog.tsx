@@ -22,6 +22,7 @@ import {
   EmptyMedia,
 } from "@/components/ui/empty";
 import { TruncatedTooltip } from "@/components/ui/truncated-tooltip";
+import { useCatalogPresets } from "@/lib/mcp/internal-mcp-catalog.query";
 import { cn } from "@/lib/utils";
 import {
   computeDeploymentStatusSummary,
@@ -30,13 +31,19 @@ import {
 } from "./deployment-status";
 import { EditCatalogContent } from "./edit-catalog-dialog";
 import { ManageUsersContent } from "./manage-users-dialog";
+import {
+  McpImageUpdateSettings,
+  type McpImageUpdateSettingsInstall,
+} from "./mcp-image-update-settings";
 import { McpLogsContent, type McpLogsTab } from "./mcp-logs-dialog";
 import type { CatalogItem } from "./mcp-server-card";
+import { PresetsSection } from "./presets-section";
 import { YamlConfigContent } from "./yaml-config-dialog";
 
 type SettingsPage =
   | "configuration"
   | "connections"
+  | "presets"
   | "debug-logs"
   | "debug-inspector"
   | "debug-shell"
@@ -64,12 +71,7 @@ interface McpServerSettingsDialogProps {
   onAddSharedConnection?: (teamId: string) => void;
   onAddOrgConnection?: () => void;
   // Debug
-  installs: {
-    id: string;
-    name: string;
-    ownerEmail?: string | null;
-    teamDetails?: { teamId: string; name: string } | null;
-  }[];
+  installs: McpImageUpdateSettingsInstall[];
   deploymentStatuses: Record<string, McpDeploymentStatusEntry>;
   deploymentServerIds: string[];
   onReinstall: () => void | Promise<void>;
@@ -94,6 +96,7 @@ const DEBUG_TAB_MAP: Record<string, McpLogsTab> = {
 const PAGE_TITLES: Record<SettingsPage, string> = {
   configuration: "Configuration",
   connections: "Credentials",
+  presets: "Presets",
   "debug-logs": "Logs",
   "debug-inspector": "Inspector",
   "debug-shell": "Shell",
@@ -135,10 +138,19 @@ export function McpServerSettingsDialog({
   onDelete,
 }: McpServerSettingsDialogProps) {
   const isBuiltin = variant === "builtin";
+  const { data: presets = [] } = useCatalogPresets(isBuiltin ? null : item.id);
+  const showPresets = !isBuiltin;
 
   const navItems: NavItemDef[] = [];
   if (!isBuiltin) {
     navItems.push({ id: "configuration", label: "Configuration" });
+  }
+  if (showPresets) {
+    navItems.push({
+      id: "presets",
+      label: "Presets",
+      badge: presets.length + 1,
+    });
   }
   if (showConnections) {
     navItems.push({
@@ -350,7 +362,19 @@ export function McpServerSettingsDialog({
                   keepOpenOnSave
                   onDirtyChange={setIsConfigDirty}
                   submitRef={configSubmitRef}
+                  imageUpdateContent={
+                    <McpImageUpdateSettings
+                      installs={installs}
+                      variant={variant}
+                    />
+                  }
                 />
+              )}
+
+              {validPage === "presets" && showPresets && (
+                <div className="flex-1 overflow-y-auto p-6">
+                  <PresetsSection cat={item} />
+                </div>
               )}
 
               {validPage === "connections" && showConnections && (

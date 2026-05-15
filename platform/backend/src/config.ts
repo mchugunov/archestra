@@ -471,6 +471,24 @@ export const parseSampleRate = (
   return parsed;
 };
 
+export const parseMcpImageUpdateCheckIntervalSeconds = (
+  envValue: string | undefined,
+): number => {
+  const DEFAULT_INTERVAL_SECONDS = 900;
+  const MIN_INTERVAL_SECONDS = 300;
+  const trimmed = envValue?.trim();
+
+  const parsed = parsePositiveInt(trimmed, DEFAULT_INTERVAL_SECONDS);
+  if (parsed < MIN_INTERVAL_SECONDS) {
+    logger.warn(
+      `ARCHESTRA_MCP_IMAGE_UPDATE_CHECK_INTERVAL_SECONDS value "${trimmed}" is below minimum (${MIN_INTERVAL_SECONDS}s), clamping to ${MIN_INTERVAL_SECONDS}`,
+    );
+    return MIN_INTERVAL_SECONDS;
+  }
+
+  return parsed;
+};
+
 /**
  * Parse ARCHESTRA_TRUST_PROXY into the value Fastify's trustProxy option accepts.
  *
@@ -783,6 +801,9 @@ const config = {
     mcpServerBaseImage:
       process.env.ARCHESTRA_ORCHESTRATOR_MCP_SERVER_BASE_IMAGE ||
       `europe-west1-docker.pkg.dev/friendly-path-465518-r6/archestra-public/mcp-server-base:${appVersion}`,
+    imageUpdateCheckIntervalSeconds: parseMcpImageUpdateCheckIntervalSeconds(
+      process.env.ARCHESTRA_MCP_IMAGE_UPDATE_CHECK_INTERVAL_SECONDS,
+    ),
     kubernetes: {
       namespace: process.env.ARCHESTRA_ORCHESTRATOR_K8S_NAMESPACE || "default",
       kubeconfig: process.env.ARCHESTRA_ORCHESTRATOR_KUBECONFIG,

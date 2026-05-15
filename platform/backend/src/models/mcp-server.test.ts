@@ -1,9 +1,39 @@
 import db, { schema } from "@/database";
 import { describe, expect, test } from "@/test";
 import McpServerModel from "./mcp-server";
+import McpServerImageUpdateStateModel from "./mcp-server-image-update-state";
 import McpServerUserModel from "./mcp-server-user";
 
 describe("McpServerModel", () => {
+  describe("image update defaults", () => {
+    test("new MCP server rows default image update checks and auto-restart to enabled", async ({
+      makeInternalMcpCatalog,
+    }) => {
+      const catalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/defaults-server:latest",
+        },
+      });
+
+      const [server] = await db
+        .insert(schema.mcpServersTable)
+        .values({
+          name: "Defaults Server",
+          catalogId: catalog.id,
+          serverType: "local",
+        })
+        .returning();
+
+      expect(server.imageUpdateCheckEnabled).toBe(true);
+      expect(server.imageUpdateAutoRestartEnabled).toBe(true);
+
+      const foundServer = await McpServerModel.findById(server.id);
+      expect(foundServer?.imageUpdateCheckEnabled).toBe(true);
+      expect(foundServer?.imageUpdateAutoRestartEnabled).toBe(true);
+    });
+  });
+
   describe("serverType field", () => {
     test("MCP servers store serverType correctly including builtin", async ({
       makeInternalMcpCatalog,
@@ -102,6 +132,208 @@ describe("McpServerModel", () => {
     });
   });
 
+  describe("findLocalServersEligibleForImageUpdateCheck", () => {
+    test("returns enabled local servers with catalog config and filters out disabled and non-local servers", async ({
+      makeInternalMcpCatalog,
+      makeMcpServer,
+    }) => {
+      const enabledLocalCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/enabled-server:latest",
+        },
+      });
+      const disabledLocalCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/disabled-server:latest",
+        },
+      });
+      const reinstallRequiredLocalCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/reinstall-required-server:latest",
+        },
+      });
+      const nonDockerLocalCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          command: "node",
+        },
+      });
+      const remoteCatalog = await makeInternalMcpCatalog({
+        serverType: "remote",
+        serverUrl: "https://remote.example.com/mcp",
+      });
+
+      const enabledLocalServer = await makeMcpServer({
+        catalogId: enabledLocalCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
+      });
+      const disabledLocalServer = await makeMcpServer({
+        catalogId: disabledLocalCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: false,
+        localInstallationStatus: "success",
+      });
+      const reinstallRequiredLocalServer = await makeMcpServer({
+        catalogId: reinstallRequiredLocalCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
+      });
+      await McpServerModel.update(reinstallRequiredLocalServer.id, {
+        reinstallRequired: true,
+      });
+      const nonDockerLocalServer = await makeMcpServer({
+        catalogId: nonDockerLocalCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
+      });
+      const remoteServer = await makeMcpServer({
+        catalogId: remoteCatalog.id,
+        serverType: "remote",
+        imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
+      });
+
+      const results =
+        await McpServerModel.findLocalServersEligibleForImageUpdateCheck();
+
+      expect(results.map(({ server }) => server.id)).toEqual([
+        enabledLocalServer.id,
+      ]);
+      expect(results[0].catalog).toMatchObject({
+        id: enabledLocalCatalog.id,
+        name: enabledLocalCatalog.name,
+        serverType: "local",
+        labels: [],
+        teams: [],
+        localConfig: {
+          dockerImage: "localhost:5001/enabled-server:latest",
+        },
+      });
+      expect(
+        results.some(({ server }) => server.id === disabledLocalServer.id),
+      ).toBe(false);
+      expect(
+        results.some(
+          ({ server }) => server.id === reinstallRequiredLocalServer.id,
+        ),
+      ).toBe(false);
+      expect(
+        results.some(({ server }) => server.id === nonDockerLocalServer.id),
+      ).toBe(false);
+      expect(results.some(({ server }) => server.id === remoteServer.id)).toBe(
+        false,
+      );
+    });
+
+    test("can filter eligible local servers by MCP server ID", async ({
+      makeInternalMcpCatalog,
+      makeMcpServer,
+    }) => {
+      const firstCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/first-server:latest",
+        },
+      });
+      const secondCatalog = await makeInternalMcpCatalog({
+        serverType: "local",
+        localConfig: {
+          dockerImage: "localhost:5001/second-server:latest",
+        },
+      });
+      const firstServer = await makeMcpServer({
+        catalogId: firstCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
+      });
+      await makeMcpServer({
+        catalogId: secondCatalog.id,
+        serverType: "local",
+        imageUpdateCheckEnabled: true,
+        localInstallationStatus: "success",
+      });
+
+      const results =
+        await McpServerModel.findLocalServersEligibleForImageUpdateCheck(
+          firstServer.id,
+        );
+
+      expect(results.map(({ server }) => server.id)).toEqual([firstServer.id]);
+      expect(results[0].catalog).toMatchObject({
+        id: firstCatalog.id,
+        localConfig: {
+          dockerImage: "localhost:5001/first-server:latest",
+        },
+      });
+    });
+
+    test("only returns local servers with successful installation status", async ({
+      makeInternalMcpCatalog,
+      makeMcpServer,
+    }) => {
+      const statuses = [
+        "idle",
+        "pending",
+        "discovering-tools",
+        "success",
+        "error",
+      ] as const;
+      const serverIdsByStatus = new Map<string, string>();
+
+      for (const status of statuses) {
+        const catalog = await makeInternalMcpCatalog({
+          serverType: "local",
+          localConfig: {
+            dockerImage: `localhost:5001/${status}:latest`,
+          },
+        });
+        const server = await makeMcpServer({
+          catalogId: catalog.id,
+          serverType: "local",
+          imageUpdateCheckEnabled: true,
+          localInstallationStatus: status,
+        });
+        serverIdsByStatus.set(status, server.id);
+      }
+
+      const results =
+        await McpServerModel.findLocalServersEligibleForImageUpdateCheck();
+
+      expect(results.map(({ server }) => server.id)).toEqual([
+        serverIdsByStatus.get("success"),
+      ]);
+      expect(
+        results.some(
+          ({ server }) => server.id === serverIdsByStatus.get("pending"),
+        ),
+      ).toBe(false);
+      expect(
+        results.some(
+          ({ server }) =>
+            server.id === serverIdsByStatus.get("discovering-tools"),
+        ),
+      ).toBe(false);
+      expect(
+        results.some(
+          ({ server }) => server.id === serverIdsByStatus.get("error"),
+        ),
+      ).toBe(false);
+      expect(
+        results.some(
+          ({ server }) => server.id === serverIdsByStatus.get("idle"),
+        ),
+      ).toBe(false);
+    });
+  });
+
   describe("findAll", () => {
     test("returns servers with user details from combined query", async ({
       makeMcpServer,
@@ -160,6 +392,56 @@ describe("McpServerModel", () => {
       const matching = allServers.filter((s) => s.id === server.id);
       expect(matching).toHaveLength(1);
       expect(matching[0].users).toHaveLength(3);
+    });
+
+    test("includes image update state when it exists", async ({
+      makeMcpServer,
+    }) => {
+      const server = await makeMcpServer();
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: server.id,
+        lastCheckedAt: new Date("2026-01-02T03:04:05Z"),
+        runningImageDigest: "sha256:running",
+        availableImageDigest: "sha256:available",
+        status: "update_available",
+      });
+
+      const allServers = await McpServerModel.findAll(undefined, true);
+
+      const found = allServers.find((s) => s.id === server.id);
+      expect(found?.imageUpdateState).toMatchObject({
+        mcpServerId: server.id,
+        runningImageDigest: "sha256:running",
+        availableImageDigest: "sha256:available",
+        status: "update_available",
+      });
+    });
+  });
+
+  describe("findById", () => {
+    test("includes image update state when it exists", async ({
+      makeMcpServer,
+    }) => {
+      const server = await makeMcpServer();
+      await McpServerImageUpdateStateModel.upsertLatestState({
+        mcpServerId: server.id,
+        lastCheckedAt: new Date("2026-01-02T03:04:05Z"),
+        runningImageDigest: "sha256:running",
+        availableImageDigest: "sha256:available",
+        status: "up_to_date",
+        lastRestartedAt: new Date("2026-01-02T03:05:05Z"),
+      });
+
+      const found = await McpServerModel.findById(server.id);
+
+      expect(found?.imageUpdateState).toMatchObject({
+        mcpServerId: server.id,
+        runningImageDigest: "sha256:running",
+        availableImageDigest: "sha256:available",
+        status: "up_to_date",
+      });
+      expect(found?.imageUpdateState?.lastCheckedAt).toBeInstanceOf(Date);
+      expect(found?.imageUpdateState?.lastRestartedAt).toBeInstanceOf(Date);
     });
   });
 

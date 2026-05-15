@@ -12,6 +12,15 @@ import {
 } from "@/models";
 import { secretManager } from "@/secrets-manager";
 import type { McpServer } from "@/types";
+import {
+  type ImageDigestProbe,
+  K8sImageDigestProbe,
+} from "./image-digest-probe";
+import { resolveMcpImagePullSecretNames } from "./image-pull-secrets";
+import type {
+  ImageUpdateRuntime,
+  ResolveAvailableImageDigestRuntimeParams,
+} from "./image-update-runtime";
 import K8sDeployment, {
   fetchPlatformPodNodeSelector,
   fetchPlatformPodTolerations,
@@ -27,12 +36,13 @@ import type {
  * McpServerRuntimeManager manages MCP servers running in Kubernetes.
  * @public — exported for testability
  */
-export class McpServerRuntimeManager {
+export class McpServerRuntimeManager implements ImageUpdateRuntime {
   private k8sApi?: k8s.CoreV1Api;
   private k8sAppsApi?: k8s.AppsV1Api;
   private k8sAttach?: k8s.Attach;
   private k8sLog?: k8s.Log;
   private k8sExec?: k8s.Exec;
+  private imageDigestProbe?: ImageDigestProbe;
   private namespace: string = "default";
   private mcpServerIdToDeploymentMap: Map<string, K8sDeployment> = new Map();
   private status: K8sRuntimeStatus = "not_initialized";
@@ -52,6 +62,10 @@ export class McpServerRuntimeManager {
       this.k8sExec = clients.exec;
       this.k8sLog = clients.log;
       this.namespace = clients.namespace;
+      this.imageDigestProbe = new K8sImageDigestProbe(
+        clients.coreApi,
+        clients.namespace,
+      );
     } catch (error) {
       logger.error({ err: error }, "Failed to load Kubernetes config");
       this.status = "error";
@@ -59,6 +73,7 @@ export class McpServerRuntimeManager {
       this.k8sAppsApi = undefined;
       this.k8sAttach = undefined;
       this.k8sLog = undefined;
+      this.imageDigestProbe = undefined;
       this.namespace = "";
       return; // graceful fallback: constructor completes with runtime disabled
     }
@@ -287,6 +302,7 @@ export class McpServerRuntimeManager {
         userConfigValues,
         environmentValues: effectiveEnvironmentValues,
         k8sExec: this.k8sExec,
+        imageDigestProbe: this.imageDigestProbe,
       });
 
       // Register the deployment BEFORE starting it
@@ -302,34 +318,14 @@ export class McpServerRuntimeManager {
         );
       }
 
-      // Create docker-registry secrets for imagePullSecrets with credentials
-      // and resolve all imagePullSecrets names for the pod spec.
-      // Regcred passwords are stored in the catalog's localConfigSecretId, not
-      // the per-user mcpServer.secretId, so fetch them separately.
-      const imagePullSecrets = catalogItem?.localConfig?.imagePullSecrets;
-      const regcredSecretData: Record<string, string> = {};
-      if (catalogItem?.localConfigSecretId && imagePullSecrets?.length) {
-        const catalogSecret = await secretManager().getSecret(
-          catalogItem.localConfigSecretId,
-        );
-        if (catalogSecret?.secret && typeof catalogSecret.secret === "object") {
-          for (const [key, value] of Object.entries(catalogSecret.secret)) {
-            if (key.startsWith("__regcred_password:")) {
-              regcredSecretData[key] = String(value);
-            }
-          }
-        }
-      }
-      const generatedRegcredNames =
-        await k8sDeployment.createDockerRegistrySecrets(
-          regcredSecretData,
-          imagePullSecrets,
-        );
-      const resolvedImagePullSecretNames =
-        K8sDeployment.collectImagePullSecretNames(
-          imagePullSecrets,
-          generatedRegcredNames,
-        );
+      const resolvedImagePullSecretNames = await resolveMcpImagePullSecretNames(
+        catalogItem,
+        (secretData, imagePullSecrets) =>
+          k8sDeployment.createDockerRegistrySecrets(
+            secretData,
+            imagePullSecrets,
+          ),
+      );
 
       await k8sDeployment.startOrCreateDeployment(resolvedImagePullSecretNames);
       logger.info(`Successfully started MCP server deployment ${id} (${name})`);
@@ -469,6 +465,7 @@ export class McpServerRuntimeManager {
         namespace: this.namespace,
         catalogItem,
         k8sExec: this.k8sExec,
+        imageDigestProbe: this.imageDigestProbe,
       });
 
       // Resolve HTTP endpoint URL (for streamable-http servers started by another replica)
@@ -694,6 +691,60 @@ export class McpServerRuntimeManager {
       return false;
     }
     return k8sDeployment.hasRunningPod();
+  }
+
+  /**
+   * Run runtime preparation before MCP image update checks start.
+   */
+  async prepareImageUpdateCheck(): Promise<void> {
+    await this.imageDigestProbe?.cleanupStaleProbePods();
+  }
+
+  /**
+   * Get the normalized digest for the currently running MCP server container.
+   */
+  async getRunningImageDigest(mcpServerId: string): Promise<string | null> {
+    const k8sDeployment = await this.getOrLoadDeployment(mcpServerId);
+    if (!k8sDeployment) {
+      return null;
+    }
+    return k8sDeployment.getRunningImageDigest();
+  }
+
+  /**
+   * Resolve the digest Kubernetes would currently pull for an MCP server image.
+   */
+  async resolveAvailableImageDigest(
+    params: ResolveAvailableImageDigestRuntimeParams,
+  ): Promise<string | null> {
+    const { mcpServerId, image, options = {} } = params;
+    const k8sDeployment = await this.getOrLoadDeployment(mcpServerId);
+    if (!k8sDeployment) {
+      return null;
+    }
+
+    const mcpServer = await McpServerModel.findById(mcpServerId);
+    if (!mcpServer?.catalogId) {
+      return k8sDeployment.resolveAvailableImageDigest({
+        image,
+        timeoutMs: options.timeoutMs,
+      });
+    }
+
+    const catalogItem = await InternalMcpCatalogModel.findById(
+      mcpServer.catalogId,
+    );
+    const resolvedImagePullSecretNames = await resolveMcpImagePullSecretNames(
+      catalogItem,
+      (secretData, imagePullSecrets) =>
+        k8sDeployment.createDockerRegistrySecrets(secretData, imagePullSecrets),
+    );
+
+    return k8sDeployment.resolveAvailableImageDigest({
+      image,
+      resolvedImagePullSecretNames,
+      timeoutMs: options.timeoutMs,
+    });
   }
 
   /**

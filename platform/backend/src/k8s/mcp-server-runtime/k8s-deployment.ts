@@ -20,6 +20,16 @@ import logger from "@/logging";
 import { InternalMcpCatalogModel } from "@/models";
 import type { InternalMcpCatalog, McpServer } from "@/types";
 import {
+  isDigestPinnedImage,
+  MCP_SERVER_CONTAINER_NAME,
+  normalizeImageDigest,
+} from "./image-digest";
+import {
+  type ImageDigestProbe,
+  K8sImageDigestProbe,
+} from "./image-digest-probe";
+import type { ResolvedImagePullSecretName } from "./image-pull-secrets";
+import {
   customYamlToDeployment,
   resolvePlaceholders,
 } from "./k8s-yaml-generator";
@@ -203,6 +213,22 @@ interface K8sDeploymentOptions {
   userConfigValues?: Record<string, string>;
   environmentValues?: Record<string, string>;
   k8sExec: Exec;
+  imageDigestProbe?: ImageDigestProbe;
+}
+
+interface ResolveAvailableImageDigestOptions {
+  image: string;
+  resolvedImagePullSecretNames?: ResolvedImagePullSecretName[];
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}
+
+interface ProbeSchedulingSpec {
+  imagePullSecrets?: ResolvedImagePullSecretName[];
+  nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null;
+  tolerations?: k8s.V1Toleration[] | null;
+  serviceAccountName?: string | null;
+  runtimeClassName?: string | null;
 }
 
 /**
@@ -232,6 +258,7 @@ export default class K8sDeployment {
   private catalogItem?: InternalMcpCatalog | null;
   private userConfigValues?: Record<string, string>;
   private environmentValues?: Record<string, string>;
+  private imageDigestProbe: ImageDigestProbe;
 
   // Track assigned port for HTTP-based MCP servers
   assignedHttpPort?: number;
@@ -249,6 +276,9 @@ export default class K8sDeployment {
     this.catalogItem = options.catalogItem;
     this.userConfigValues = options.userConfigValues;
     this.environmentValues = options.environmentValues;
+    this.imageDigestProbe =
+      options.imageDigestProbe ??
+      new K8sImageDigestProbe(options.k8sApi, options.namespace);
     this.deploymentName = K8sDeployment.constructDeploymentName(
       options.mcpServer,
       options.catalogItem,
@@ -686,31 +716,6 @@ export default class K8sDeployment {
   }
 
   /**
-   * Collect all imagePullSecrets names for pod spec: existing secret names +
-   * generated docker-registry secret names from credentials entries.
-   */
-  static collectImagePullSecretNames(
-    imagePullSecrets: ImagePullSecretConfig[] | undefined,
-    generatedRegcredNames: string[],
-  ): Array<{ name: string }> {
-    const names: Array<{ name: string }> = [];
-
-    if (imagePullSecrets) {
-      for (const entry of imagePullSecrets) {
-        if (entry.source === "existing") {
-          names.push({ name: entry.name });
-        }
-      }
-    }
-
-    for (const name of generatedRegcredNames) {
-      names.push({ name });
-    }
-
-    return names;
-  }
-
-  /**
    * Returns the system-managed labels that must always be present on deployments.
    * These labels are used for identification and cannot be overridden by user configuration.
    */
@@ -731,6 +736,7 @@ export default class K8sDeployment {
    * @param httpPort - The HTTP port to expose (if needsHttp is true)
    * @param nodeSelector - Optional nodeSelector to apply to the pod spec (e.g., inherited from platform pod)
    * @param tolerations - Optional tolerations to apply to the pod spec (e.g., inherited from platform pod)
+   * @param resolvedImagePullSecretNames - Optional resolved ImagePullSecret names
    * @returns The Kubernetes deployment specification
    */
   generateDeploymentSpec(
@@ -740,7 +746,7 @@ export default class K8sDeployment {
     httpPort: number,
     nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null,
     tolerations?: k8s.V1Toleration[] | null,
-    resolvedImagePullSecretNames?: Array<{ name: string }>,
+    resolvedImagePullSecretNames?: ResolvedImagePullSecretName[],
   ): k8s.V1Deployment {
     // Check if YAML override is provided
     if (this.catalogItem?.deploymentSpecYaml) {
@@ -823,12 +829,8 @@ export default class K8sDeployment {
         {
           name: "mcp-server",
           image: dockerImage,
-          // Use Never for local images (without registry/domain prefix)
-          // Registry images typically have a domain or slash (e.g., docker.io/image, myregistry.com/image, or username/image)
           imagePullPolicy:
-            dockerImage.includes("/") || dockerImage.includes(".")
-              ? undefined // Let K8s decide (defaults to Always for :latest, IfNotPresent for others)
-              : ("Never" as k8s.V1Container["imagePullPolicy"]), // For local images like "gaggimate-mcp:latest" without registry
+            K8sDeployment.getDeploymentImagePullPolicy(dockerImage),
           env: envVars,
           // Inject all keys from existing K8s Secrets/ConfigMaps as env vars
           ...(localConfig.envFrom?.length
@@ -937,7 +939,7 @@ export default class K8sDeployment {
     httpPort: number,
     nodeSelector?: k8s.V1PodSpec["nodeSelector"] | null,
     tolerations?: k8s.V1Toleration[] | null,
-    resolvedImagePullSecretNames?: Array<{ name: string }>,
+    resolvedImagePullSecretNames?: ResolvedImagePullSecretName[],
   ): k8s.V1Deployment | null {
     const k8sSecretName = this.getK8sSecretName();
 
@@ -1307,8 +1309,10 @@ export default class K8sDeployment {
         // Add env var value to envMap based on prompting behavior
         // Note: Values may be booleans/numbers at runtime despite type annotations, so we convert to string
         let value: string | undefined;
-        if (envDef.promptOnInstallation) {
-          // Prompted during installation - get from environmentValues
+        if (envDef.promptOnInstallation || envDef.promptOnPreset) {
+          // Value supplied via the install request (either install-time
+          // input or preset overlay merged in by the install route) — read
+          // from environmentValues.
           const rawValue = this.environmentValues?.[envDef.key];
           value = rawValue != null ? String(rawValue) : undefined;
         } else {
@@ -1484,7 +1488,7 @@ export default class K8sDeployment {
    * Create or start the deployment for this MCP server
    */
   async startOrCreateDeployment(
-    resolvedImagePullSecretNames?: Array<{ name: string }>,
+    resolvedImagePullSecretNames?: ResolvedImagePullSecretName[],
   ): Promise<void> {
     try {
       /**
@@ -1692,6 +1696,95 @@ export default class K8sDeployment {
   async hasRunningPod(): Promise<boolean> {
     const pod = await this.findPodForDeployment();
     return !!pod;
+  }
+
+  /**
+   * Return the normalized digest for the currently running MCP server container.
+   */
+  async getRunningImageDigest(): Promise<string | null> {
+    const pod = await this.findPodForDeployment();
+    if (!pod) {
+      return null;
+    }
+
+    const containerStatus = pod.status?.containerStatuses?.find(
+      (status) => status.name === MCP_SERVER_CONTAINER_NAME,
+    );
+    if (!containerStatus?.imageID) {
+      return null;
+    }
+
+    return normalizeImageDigest(containerStatus.imageID);
+  }
+
+  /**
+   * Resolve the digest Kubernetes would currently pull for the target image.
+   */
+  async resolveAvailableImageDigest(
+    options: ResolveAvailableImageDigestOptions,
+  ): Promise<string> {
+    const schedulingSpec = await this.resolveProbeSchedulingSpec(
+      options.resolvedImagePullSecretNames,
+    );
+
+    return this.imageDigestProbe.resolveAvailableImageDigest({
+      mcpServer: this.mcpServer,
+      image: options.image,
+      imagePullSecrets: schedulingSpec.imagePullSecrets,
+      nodeSelector: schedulingSpec.nodeSelector,
+      tolerations: schedulingSpec.tolerations,
+      serviceAccountName: schedulingSpec.serviceAccountName,
+      runtimeClassName: schedulingSpec.runtimeClassName,
+      timeoutMs: options.timeoutMs,
+      pollIntervalMs: options.pollIntervalMs,
+    });
+  }
+
+  private async resolveProbeSchedulingSpec(
+    resolvedImagePullSecretNames?: ResolvedImagePullSecretName[],
+  ): Promise<ProbeSchedulingSpec> {
+    let deployment: k8s.V1Deployment;
+    try {
+      deployment = await this.k8sAppsApi.readNamespacedDeployment({
+        name: this.deploymentName,
+        namespace: this.namespace,
+      });
+    } catch (error) {
+      throw new Error(
+        `Failed to resolve scheduling constraints for MCP server deployment ${this.deploymentName}`,
+        { cause: error },
+      );
+    }
+
+    const podSpec = deployment.spec?.template?.spec;
+    if (!podSpec) {
+      throw new Error(
+        `MCP server deployment ${this.deploymentName} has no pod template spec for image digest probing`,
+      );
+    }
+
+    const imagePullSecrets =
+      podSpec.imagePullSecrets?.flatMap((secret) =>
+        secret.name ? [{ name: secret.name }] : [],
+      ) ?? [];
+    if (resolvedImagePullSecretNames?.length && imagePullSecrets.length === 0) {
+      logger.debug(
+        {
+          mcpServerId: this.mcpServer.id,
+          deploymentName: this.deploymentName,
+          resolvedImagePullSecretCount: resolvedImagePullSecretNames.length,
+        },
+        "Resolved image pull secrets exist but MCP Deployment pod template has none; image digest probe will match the Deployment pod template",
+      );
+    }
+
+    return {
+      imagePullSecrets: imagePullSecrets.length ? imagePullSecrets : undefined,
+      nodeSelector: podSpec.nodeSelector,
+      tolerations: podSpec.tolerations,
+      serviceAccountName: podSpec.serviceAccountName,
+      runtimeClassName: podSpec.runtimeClassName,
+    };
   }
 
   /**
@@ -2902,5 +2995,19 @@ export default class K8sDeployment {
     );
 
     return { k8sWs, podName };
+  }
+
+  private static getDeploymentImagePullPolicy(
+    image: string,
+  ): k8s.V1Container["imagePullPolicy"] | undefined {
+    if (isDigestPinnedImage(image)) {
+      return undefined;
+    }
+
+    if (!(image.includes("/") || image.includes("."))) {
+      return "Never";
+    }
+
+    return undefined;
   }
 }

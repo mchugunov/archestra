@@ -65,6 +65,11 @@ export const RouteId = {
   ValidateDeploymentYaml: "validateDeploymentYaml",
   ResetDeploymentYaml: "resetDeploymentYaml",
   GetK8sImagePullSecrets: "getK8sImagePullSecrets",
+  // MCP Catalog Children (UI-named "presets") Routes
+  GetCatalogChildren: "getCatalogChildren",
+  CreateCatalogChild: "createCatalogChild",
+  UpdateCatalogChild: "updateCatalogChild",
+  DeleteCatalogChild: "deleteCatalogChild",
 
   // MCP Server Routes
   GetMcpServers: "getMcpServers",
@@ -72,6 +77,7 @@ export const RouteId = {
   GetMcpServerTools: "getMcpServerTools",
   InspectMcpServer: "inspectMcpServer",
   InstallMcpServer: "installMcpServer",
+  UpdateMcpServer: "updateMcpServer",
   DeleteMcpServer: "deleteMcpServer",
   ReauthenticateMcpServer: "reauthenticateMcpServer",
   ReinstallMcpServer: "reinstallMcpServer",

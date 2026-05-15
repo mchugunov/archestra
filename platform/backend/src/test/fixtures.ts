@@ -178,7 +178,6 @@ async function makeOrganization(
       name: `Test Org ${orgId.substring(0, 8)}`,
       slug: `test-org-${orgId.substring(0, 8)}`,
       createdAt: new Date(),
-      limitCleanupInterval: null,
       theme: "cosmic-night",
       customFont: "lato",
       ...overrides,
@@ -483,7 +482,18 @@ async function makeMember(
  */
 async function makeMcpServer(
   overrides: Partial<
-    Pick<InsertMcpServer, "name" | "catalogId" | "ownerId" | "teamId" | "scope">
+    Pick<
+      InsertMcpServer,
+      | "name"
+      | "catalogId"
+      | "ownerId"
+      | "teamId"
+      | "scope"
+      | "serverType"
+      | "localInstallationStatus"
+      | "imageUpdateCheckEnabled"
+      | "imageUpdateAutoRestartEnabled"
+    >
   > = {},
 ) {
   // Create a catalog if catalogId is not provided
@@ -531,6 +541,7 @@ async function makeInternalMcpCatalog(
       | "authDescription"
       | "authFields"
       | "localConfig"
+      | "localConfigSecretId"
       | "userConfig"
       | "oauthConfig"
       | "enterpriseManagedConfig"

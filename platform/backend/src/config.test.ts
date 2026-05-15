@@ -20,6 +20,7 @@ import {
   parseConnectorSyncMaxDuration,
   parseContentMaxLength,
   parseDatabasePoolMax,
+  parseMcpImageUpdateCheckIntervalSeconds,
   parseMetricsPort,
   parseProcessType,
   parseSampleRate,
@@ -1134,6 +1135,39 @@ describe("parseSampleRate", () => {
 
   test("should return default for non-numeric value", () => {
     expect(parseSampleRate("abc", 0.1)).toBe(0.1);
+  });
+});
+
+describe("parseMcpImageUpdateCheckIntervalSeconds", () => {
+  test("should return default 900 when undefined", () => {
+    expect(parseMcpImageUpdateCheckIntervalSeconds(undefined)).toBe(900);
+  });
+
+  test("should return default 900 when empty string", () => {
+    expect(parseMcpImageUpdateCheckIntervalSeconds("")).toBe(900);
+  });
+
+  test("should parse valid custom value", () => {
+    expect(parseMcpImageUpdateCheckIntervalSeconds("1200")).toBe(1200);
+  });
+
+  test("should trim whitespace and parse valid custom value", () => {
+    expect(parseMcpImageUpdateCheckIntervalSeconds("  600  ")).toBe(600);
+  });
+
+  test("should return default for invalid value", () => {
+    expect(parseMcpImageUpdateCheckIntervalSeconds("abc")).toBe(900);
+  });
+
+  test("should clamp below-minimum value to 300 and warn", () => {
+    expect(parseMcpImageUpdateCheckIntervalSeconds("299")).toBe(300);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'ARCHESTRA_MCP_IMAGE_UPDATE_CHECK_INTERVAL_SECONDS value "299" is below minimum (300s), clamping to 300',
+    );
+  });
+
+  test("should allow exactly the minimum value", () => {
+    expect(parseMcpImageUpdateCheckIntervalSeconds("300")).toBe(300);
   });
 });
 
